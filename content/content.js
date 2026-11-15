@@ -402,7 +402,10 @@
 
   async function openOptions() {
     try {
-      await chrome.runtime.openOptionsPage();
+      const response = await sendRuntimeMessage({ type: 'OPEN_OPTIONS' }, 8000);
+      if (!response || !response.ok) {
+        throw new Error((response && response.error) || '打开设置页失败');
+      }
     } catch (_) {
       showToast('无法打开设置页，请在扩展管理中打开', 'error');
     }

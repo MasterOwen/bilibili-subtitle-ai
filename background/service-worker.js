@@ -610,6 +610,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((error) => sendResponse(errorResponse(error)));
     return true;
   }
+  if (message.type === 'OPEN_OPTIONS') {
+    try {
+      chrome.runtime.openOptionsPage(() => {
+        const error = chrome.runtime.lastError;
+        if (error) sendResponse(errorResponse(new Error(error.message)));
+        else sendResponse({ ok: true });
+      });
+    } catch (error) {
+      sendResponse(errorResponse(error));
+    }
+    return true;
+  }
   if (message.type === 'PING') {
     sendResponse({
       ok: true,
