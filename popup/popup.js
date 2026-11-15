@@ -75,7 +75,7 @@
     if (!route) {
       setStatus('err', '当前不是 B站视频播放页');
       els.openBtn.disabled = true;
-      els.tip.textContent = '请先打开 bilibili.com 的视频或番剧播放页，再点击扩展图标。';
+      els.tip.textContent = '请先打开 bilibili.com 的视频、列表播放页或番剧播放页，再点击扩展图标。';
       return;
     }
 

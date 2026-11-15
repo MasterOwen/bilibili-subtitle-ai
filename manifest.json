@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "B站字幕 AI 总结",
   "short_name": "字幕总结",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "在 Bilibili 视频页获取当前视频字幕，交给 AI 生成总结，并导出 SRT/TXT 字幕或 Markdown/TXT 总结。",
   "minimum_chrome_version": "114",
   "permissions": ["storage", "tabs"],
@@ -42,7 +42,11 @@
         "https://www.bilibili.com/video/*",
         "https://m.bilibili.com/video/*",
         "https://www.bilibili.com/bangumi/play/*",
-        "https://m.bilibili.com/bangumi/play/*"
+        "https://m.bilibili.com/bangumi/play/*",
+        "https://www.bilibili.com/list/*",
+        "https://m.bilibili.com/list/*",
+        "https://www.bilibili.com/medialist/*",
+        "https://m.bilibili.com/medialist/*"
       ],
       "js": ["content/page-bridge.js"],
       "run_at": "document_start",
@@ -53,7 +57,11 @@
         "https://www.bilibili.com/video/*",
         "https://m.bilibili.com/video/*",
         "https://www.bilibili.com/bangumi/play/*",
-        "https://m.bilibili.com/bangumi/play/*"
+        "https://m.bilibili.com/bangumi/play/*",
+        "https://www.bilibili.com/list/*",
+        "https://m.bilibili.com/list/*",
+        "https://www.bilibili.com/medialist/*",
+        "https://m.bilibili.com/medialist/*"
       ],
       "js": ["shared/utils.js", "shared/settings.js", "content/content.js"],
       "run_at": "document_idle"

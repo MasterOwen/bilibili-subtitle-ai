@@ -369,7 +369,7 @@ async function resolveTracks(video, pageState, viewData) {
 
 async function loadVideo(payload) {
   const route = U.parseBilibiliRoute(payload && payload.href);
-  if (!route) throw new Error('当前页面不是支持的 B站视频播放页');
+  if (!route) throw new Error('当前页面不是支持的 B站视频、列表播放或番剧播放页');
   const pageState = sanitizePageState(payload.pageState);
   const context =
     route.kind === 'video' ? await getViewInfo(route, pageState) : await getBangumiInfo(route, pageState);

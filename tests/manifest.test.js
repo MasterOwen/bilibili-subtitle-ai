@@ -43,6 +43,21 @@ test('all manifest-referenced files exist', () => {
   }
 });
 
+test('content scripts run on video, list and bangumi pages', () => {
+  const patterns = new Set(
+    manifest.content_scripts.flatMap((script) => script.matches || []),
+  );
+  for (const page of [
+    'https://www.bilibili.com/video/*',
+    'https://www.bilibili.com/list/*',
+    'https://m.bilibili.com/list/*',
+    'https://www.bilibili.com/medialist/*',
+    'https://www.bilibili.com/bangumi/play/*',
+  ]) {
+    assert.ok(patterns.has(page), `content script does not match ${page}`);
+  }
+});
+
 test('options and popup only load local scripts', () => {
   for (const page of ['options/options.html', 'popup/popup.html']) {
     const html = fs.readFileSync(path.join(root, page), 'utf8');

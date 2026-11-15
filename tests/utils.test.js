@@ -21,6 +21,21 @@ test('parses Bilibili video and bangumi routes', () => {
   const old = U.parseBilibiliRoute('https://www.bilibili.com/video/av12345/');
   assert.equal(old.aid, 12345);
 
+  const watchLater = U.parseBilibiliRoute(
+    'https://www.bilibili.com/list/watchlater?oid=117614441536039&bvid=BV1Svs36LEdr&spm_id_from=333.1391.top_right_bar_window_view_later.content.click',
+  );
+  assert.equal(watchLater.kind, 'video');
+  assert.equal(watchLater.bvid, 'BV1Svs36LEdr');
+  assert.equal(watchLater.page, 1);
+  assert.equal(watchLater.key, 'video:BV1SVS36LEDR:p1');
+
+  const mediaList = U.parseBilibiliRoute(
+    'https://www.bilibili.com/medialist/play/ml123?bvid=BV1GJ411x7h7&p=2',
+  );
+  assert.equal(mediaList.bvid, 'BV1GJ411x7h7');
+  assert.equal(mediaList.page, 2);
+  assert.equal(U.parseBilibiliRoute('https://www.bilibili.com/list/watchlater?oid=1'), null);
+
   const ep = U.parseBilibiliRoute('https://www.bilibili.com/bangumi/play/ep123456');
   assert.equal(ep.kind, 'bangumi');
   assert.equal(ep.epId, 123456);

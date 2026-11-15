@@ -155,6 +155,25 @@
       };
     }
 
+    // Watch later, favorites, collections and series play the current video in
+    // a /list/... or /medialist/play/... page; the video ID is in the query.
+    if (/^\/(?:list|medialist\/play)\//i.test(url.pathname)) {
+      const rawBvid = String(url.searchParams.get('bvid') || '').trim();
+      const bvidMatch = rawBvid.match(/^BV([0-9A-Za-z]{10})$/i);
+      if (bvidMatch) {
+        const bvid = `BV${bvidMatch[1]}`;
+        const pageValue = Number(url.searchParams.get('p'));
+        const page = Number.isFinite(pageValue) && pageValue > 0 ? Math.floor(pageValue) : 1;
+        return {
+          kind: 'video',
+          bvid,
+          aid: 0,
+          page,
+          key: `video:${bvid.toUpperCase()}:p${page}`,
+        };
+      }
+    }
+
     const bangumi = url.pathname.match(/^\/bangumi\/play\/(ep|ss)(\d+)\/?/i);
     if (bangumi) {
       const type = bangumi[1].toLowerCase();
