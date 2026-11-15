@@ -1,0 +1,179 @@
+/*
+ * Settings defaults, validation and API URL helpers. UMD so the same file can
+ * be imported by the MV3 service worker, options page and Node tests.
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) {
+    module.exports = api;
+  } else {
+    root.BiliSubSettings = api;
+  }
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  const SETTINGS_KEY = 'settings';
+
+  const DEFAULTS = Object.freeze({
+    apiBaseUrl: 'https://api.deepseek.com/v1',
+    apiKey: '',
+    model: 'deepseek-chat',
+    language: 'zh',
+    style: 'structured',
+    chunkChars: 7000,
+    customPrompt: '',
+    txtTimestamps: false,
+    includeHeader: true,
+  });
+
+  const PRESETS = Object.freeze({
+    deepseek: {
+      label: 'DeepSeek',
+      apiBaseUrl: 'https://api.deepseek.com/v1',
+      model: 'deepseek-chat',
+      hint: '在 platform.deepseek.com 创建 API Key',
+    },
+    openai: {
+      label: 'OpenAI',
+      apiBaseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      hint: '在 platform.openai.com 创建 API Key',
+    },
+    siliconflow: {
+      label: '硅基流动',
+      apiBaseUrl: 'https://api.siliconflow.cn/v1',
+      model: 'deepseek-ai/DeepSeek-V3',
+      hint: '在 cloud.siliconflow.cn 创建 API Key',
+    },
+    zhipu: {
+      label: '智谱 GLM',
+      apiBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      model: 'glm-4-flash',
+      hint: '在 open.bigmodel.cn 创建 API Key',
+    },
+    custom: {
+      label: '自定义 / 本地模型',
+      apiBaseUrl: '',
+      model: '',
+      hint: '支持 OpenAI Chat Completions 兼容接口',
+    },
+  });
+
+  const STYLES = Object.freeze([
+    { value: 'structured', label: '结构化摘要', hint: '概括 + 要点 + 分章节脉络 + 结论' },
+    { value: 'brief', label: '精简要点', hint: '3-5 句概括 + 高密度要点，适合快速了解' },
+    { value: 'notes', label: '详细笔记', hint: '按主题展开，保留解释、例子和步骤' },
+    { value: 'study', label: '学习提纲', hint: '概念、框架、重点难点与复习问题' },
+  ]);
+
+  const LANGUAGES = Object.freeze([
+    { value: 'zh', label: '简体中文' },
+    { value: 'en', label: 'English' },
+    { value: 'source', label: '跟随字幕语言' },
+  ]);
+
+  function normalizeSettings(raw) {
+    const input = raw && typeof raw === 'object' ? raw : {};
+    const pick = (key) => (input[key] === undefined ? DEFAULTS[key] : input[key]);
+    const chunk = Number(pick('chunkChars'));
+    const styleValue = String(pick('style') || DEFAULTS.style);
+    const languageValue = String(pick('language') || DEFAULTS.language);
+    return {
+      apiBaseUrl: String(pick('apiBaseUrl') || '').trim().replace(/\/+$/, ''),
+      apiKey: String(pick('apiKey') || '').trim(),
+      model: String(pick('model') || '').trim(),
+      language: LANGUAGES.some((item) => item.value === languageValue) ? languageValue : DEFAULTS.language,
+      style: STYLES.some((item) => item.value === styleValue) ? styleValue : DEFAULTS.style,
+      chunkChars: Number.isFinite(chunk) ? Math.min(12000, Math.max(3000, Math.round(chunk / 500) * 500)) : DEFAULTS.chunkChars,
+      customPrompt: String(pick('customPrompt') || '').trim().slice(0, 1500),
+      txtTimestamps: Boolean(pick('txtTimestamps')),
+      includeHeader: Boolean(pick('includeHeader')),
+    };
+  }
+
+  async function loadSettings() {
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+      return normalizeSettings(DEFAULTS);
+    }
+    const stored = await chrome.storage.local.get(SETTINGS_KEY);
+    return normalizeSettings(stored && stored[SETTINGS_KEY]);
+  }
+
+  async function saveSettings(settings) {
+    const normalized = normalizeSettings(settings);
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+      return normalized;
+    }
+    await chrome.storage.local.set({ [SETTINGS_KEY]: normalized });
+    return normalized;
+  }
+
+  function isConfigured(settings) {
+    return Boolean(settings && settings.apiBaseUrl && settings.apiKey && settings.model);
+  }
+
+  function assertHttpUrl(value) {
+    let url;
+    try {
+      url = new URL(String(value || '').trim());
+    } catch (_) {
+      throw new Error('API Base URL 格式不正确');
+    }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      throw new Error('API Base URL 必须以 http:// 或 https:// 开头');
+    }
+    return url;
+  }
+
+  /**
+   * Accepts a base URL (…/v1, …/v1/) or a full …/chat/completions URL.
+   */
+  function buildChatCompletionsUrl(baseUrl) {
+    const url = assertHttpUrl(baseUrl);
+    const path = url.pathname.replace(/\/+$/, '');
+    if (/\/chat\/completions$/i.test(path)) {
+      url.pathname = path;
+      url.search = '';
+      url.hash = '';
+      return url.href;
+    }
+    url.pathname = `${path || '/v1'}/chat/completions`.replace(/\/{2,}/g, '/');
+    url.search = '';
+    url.hash = '';
+    return url.href;
+  }
+
+  function originPatternFor(baseUrl) {
+    const url = assertHttpUrl(baseUrl);
+    // Extension match patterns do not include ports; omitting the port grants
+    // the host for all ports (needed by local OpenAI-compatible servers).
+    return `${url.protocol}//${url.hostname}/*`;
+  }
+
+  function presetForSettings(settings) {
+    const base = String((settings && settings.apiBaseUrl) || '').replace(/\/+$/, '').toLowerCase();
+    const model = String((settings && settings.model) || '').toLowerCase();
+    for (const [key, preset] of Object.entries(PRESETS)) {
+      if (key === 'custom') continue;
+      if (preset.apiBaseUrl.replace(/\/+$/, '').toLowerCase() === base) return key;
+      if (preset.model.toLowerCase() === model && base.includes(new URL(preset.apiBaseUrl).hostname)) return key;
+    }
+    return 'custom';
+  }
+
+  return {
+    SETTINGS_KEY,
+    DEFAULTS,
+    PRESETS,
+    STYLES,
+    LANGUAGES,
+    normalizeSettings,
+    loadSettings,
+    saveSettings,
+    isConfigured,
+    buildChatCompletionsUrl,
+    assertHttpUrl,
+    originPatternFor,
+    presetForSettings,
+  };
+});

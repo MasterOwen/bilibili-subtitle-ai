@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>设置 · B站字幕 AI 总结</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-a"></div>
+    <div class="ambient ambient-b"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <img src="../icons/icon48.png" alt="" width="44" height="44" />
+        <div>
+          <h1>字幕总结 <span>设置</span></h1>
+          <p>把 B站视频字幕变成可读、可导出的 AI 笔记</p>
+        </div>
+      </div>
+      <a class="top-link" href="https://www.bilibili.com" target="_blank" rel="noopener noreferrer">
+        打开 Bilibili
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 3h7v7" /><path d="M10 14 21 3" /><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
+        </svg>
+      </a>
+    </header>
+
+    <main class="layout">
+      <div class="main-column">
+        <section class="card" id="ai-card">
+          <div class="card-heading">
+            <span class="step">01</span>
+            <div>
+              <h2>AI 服务</h2>
+              <p>支持 DeepSeek、OpenAI 以及任意 OpenAI Chat Completions 兼容接口。</p>
+            </div>
+          </div>
+
+          <div class="preset-grid" id="presetGrid" role="group" aria-label="API 预设"></div>
+
+          <div class="field-grid">
+            <label class="field field-wide">
+              <span class="field-label">API Base URL</span>
+              <input id="apiBaseUrl" type="url" spellcheck="false" autocomplete="off" placeholder="https://api.deepseek.com/v1" />
+              <span class="field-hint">填写到版本号即可（如 /v1）；也可直接粘贴完整的 /chat/completions 地址。</span>
+            </label>
+            <label class="field">
+              <span class="field-label">模型名称</span>
+              <input id="model" type="text" spellcheck="false" autocomplete="off" placeholder="deepseek-chat" />
+              <span class="field-hint">例如 deepseek-chat、gpt-4o-mini。</span>
+            </label>
+            <label class="field">
+              <span class="field-label">API Key</span>
+              <span class="password-wrap">
+                <input id="apiKey" type="password" spellcheck="false" autocomplete="new-password" placeholder="sk-..." />
+                <button class="reveal" id="revealKey" type="button" aria-label="显示 API Key" title="显示 / 隐藏">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" /><circle cx="12" cy="12" r="2.6" />
+                  </svg>
+                </button>
+              </span>
+              <span class="field-hint">仅保存在本机扩展存储中，不会发送到除该 API 之外的地方。</span>
+            </label>
+          </div>
+
+          <div class="test-row">
+            <button class="btn secondary" id="testBtn" type="button">
+              <span class="btn-spinner" hidden></span>
+              <span id="testLabel">测试连接</span>
+            </button>
+            <span class="inline-note">测试会发送一条极小的请求，可能产生少量费用。</span>
+          </div>
+          <div class="result-line" id="testResult" role="status"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-heading">
+            <span class="step">02</span>
+            <div>
+              <h2>总结偏好</h2>
+              <p>控制 AI 如何组织内容。长视频会自动分段提炼，再合并成完整总结。</p>
+            </div>
+          </div>
+
+          <div class="field-grid">
+            <label class="field">
+              <span class="field-label">输出语言</span>
+              <select id="language">
+                <option value="zh">简体中文</option>
+                <option value="en">English</option>
+                <option value="source">跟随字幕语言</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">总结风格</span>
+              <select id="style">
+                <option value="structured">结构化摘要</option>
+                <option value="brief">精简要点</option>
+                <option value="notes">详细笔记</option>
+                <option value="study">学习提纲</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="style-hints" id="styleHints"></div>
+
+          <label class="field field-range">
+            <span class="field-label">分段长度 <output id="chunkOutput">7000 字</output></span>
+            <input id="chunkChars" type="range" min="3000" max="12000" step="500" value="7000" />
+            <span class="field-hint">每段字幕的字数上限。视频很长时可适当调大，减少请求次数；模型上下文较小时可调小。</span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">额外要求 <span class="optional">可选</span></span>
+            <textarea id="customPrompt" rows="4" maxlength="1500" placeholder="例如：重点保留实操步骤；用更口语的方式解释；最后列出 3 个可以立即尝试的行动。"></textarea>
+            <span class="field-hint"><span id="promptCount">0</span>/1500 字。额外要求会附加在每次总结提示中。</span>
+          </label>
+        </section>
+
+        <section class="card">
+          <div class="card-heading">
+            <span class="step">03</span>
+            <div>
+              <h2>导出选项</h2>
+              <p>字幕和总结都可以在页面面板中导出，不需要额外的下载权限。</p>
+            </div>
+          </div>
+
+          <div class="switches">
+            <label class="switch-row">
+              <span>
+                <strong>TXT 字幕包含时间戳</strong>
+                <small>开启后格式为 [00:12] 字幕内容；SRT 始终保留完整时间轴。</small>
+              </span>
+              <input id="txtTimestamps" type="checkbox" />
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="switch-row">
+              <span>
+                <strong>导出文件包含视频信息</strong>
+                <small>在 TXT / Markdown 文件开头写入标题、链接、UP 主和导出时间。</small>
+              </span>
+              <input id="includeHeader" type="checkbox" />
+              <i aria-hidden="true"></i>
+            </label>
+          </div>
+        </section>
+      </div>
+
+      <aside class="side-column">
+        <section class="card side-card">
+          <h2>使用步骤</h2>
+          <ol class="steps">
+            <li><b>打开视频</b><span>进入任意 B站视频或番剧播放页。</span></li>
+            <li><b>点击悬浮按钮</b><span>页面右侧「字幕总结」，或点击扩展图标打开面板。</span></li>
+            <li><b>加载字幕</b><span>选择语言，面板会自动获取字幕列表并下载。</span></li>
+            <li><b>生成与导出</b><span>生成 AI 总结，按需导出 SRT / TXT / Markdown。</span></li>
+          </ol>
+        </section>
+
+        <section class="card side-card">
+          <h2>隐私说明</h2>
+          <ul class="privacy-list">
+            <li>API Key 只保存在 <code>chrome.storage.local</code>，不会上传到本扩展的服务器。</li>
+            <li>字幕仅发送给你配置的 AI 接口用于生成总结。</li>
+            <li>扩展没有统计、埋点或远程代码。</li>
+            <li>自定义 API 域名会通过浏览器权限弹窗单独授权。</li>
+          </ul>
+        </section>
+
+        <section class="card side-card warn-card">
+          <h2>没有字幕？</h2>
+          <p>B站只为部分视频提供字幕。若提示需要登录，请先在 B站登录；若仍为空，通常说明该视频尚未生成字幕或字幕被锁定。</p>
+          <p>获取失败时，可以刷新 B站页面后重试；B站接口偶尔会触发风控。</p>
+        </section>
+
+        <div class="version">v<span id="version">1.0.0</span> · 本地运行，无远程代码</div>
+      </aside>
+    </main>
+
+    <div class="savebar">
+      <div class="savebar-inner">
+        <div class="save-status" id="saveStatus" role="status">设置会保存在本机。</div>
+        <div class="save-actions">
+          <span class="save-hint">修改后点击保存</span>
+          <button class="btn primary" id="saveBtn" type="button">保存设置</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="../shared/settings.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

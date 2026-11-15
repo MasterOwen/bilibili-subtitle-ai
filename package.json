@@ -1,0 +1,12 @@
+{
+  "name": "bilibili-subtitle-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bilibili subtitle downloader and AI summarizer browser extension",
+  "scripts": {
+    "test": "node tests/utils.test.js && node tests/settings.test.js && node tests/manifest.test.js && node tests/ai.test.js",
+    "test:browser": "node tests/browser-smoke.js",
+    "test:background": "node tests/background-smoke.js",
+    "check": "node --check background/service-worker.js && node --check background/ai.js && node --check content/content.js && node --check content/page-bridge.js && node --check options/options.js && node --check popup/popup.js && node --check shared/utils.js && node --check shared/settings.js"
+  }
+}

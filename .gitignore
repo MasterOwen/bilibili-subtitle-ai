@@ -1,0 +1,7 @@
+tests/.tmp-run/
+tests/.tmp-background/
+preview/_*.png
+preview/panel-summary-failure.png
+node_modules/
+.DS_Store
+dist/

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>测试视频：把字幕变成 AI 笔记 - 哔哩哔哩</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: #f6f7f8;
+        color: #18191c;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      }
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        height: 56px;
+        padding: 0 34px;
+        border-bottom: 1px solid #e7e9ec;
+        background: #fff;
+        font-size: 13px;
+      }
+      .logo { color: #fb7299; font-weight: 800; font-size: 18px; letter-spacing: -0.03em; }
+      .nav-links { display: flex; gap: 18px; color: #61666d; }
+      .search { width: 280px; height: 32px; margin-left: auto; border: 1px solid #e3e5e7; border-radius: 8px; background: #f6f7f8; }
+      .avatar { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, #ffc4d4, #c4b5fd); }
+      .layout { display: flex; gap: 24px; width: 1240px; margin: 22px auto 0; }
+      .main { width: 860px; }
+      .player {
+        position: relative;
+        width: 860px;
+        height: 484px;
+        overflow: hidden;
+        border-radius: 7px;
+        background: #111;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+      }
+      .player::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(60% 80% at 20% 10%, rgba(251, 114, 153, 0.4), transparent 55%),
+          radial-gradient(80% 70% at 90% 90%, rgba(72, 139, 255, 0.4), transparent 60%);
+      }
+      video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.5; }
+      .play {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        display: grid;
+        place-items: center;
+        width: 62px;
+        height: 62px;
+        border-radius: 50%;
+        background: rgba(0, 0, 0, 0.42);
+        color: #fff;
+        font-size: 24px;
+        transform: translate(-50%, -50%);
+      }
+      .controls {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 45px;
+        padding: 0 14px;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+        color: #fff;
+        font-size: 11px;
+      }
+      .bar { flex: 1; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.25); }
+      .bar::before { content: ""; display: block; width: 26%; height: 100%; background: #fb7299; border-radius: inherit; }
+      .title { margin-top: 17px; font-size: 21px; font-weight: 700; line-height: 1.45; }
+      .meta { display: flex; gap: 18px; margin-top: 10px; color: #9499a0; font-size: 12px; }
+      .desc {
+        margin-top: 15px;
+        padding: 14px 16px;
+        border-radius: 7px;
+        background: #fff;
+        color: #61666d;
+        font-size: 12px;
+        line-height: 1.8;
+      }
+      .side { width: 350px; }
+      .card {
+        margin-bottom: 14px;
+        padding: 14px;
+        border-radius: 7px;
+        background: #fff;
+      }
+      .card h3 { margin: 0 0 12px; font-size: 14px; }
+      .rec { display: flex; gap: 11px; margin-bottom: 12px; }
+      .thumb { width: 128px; height: 78px; flex: none; border-radius: 5px; background: linear-gradient(135deg, #dbeafe, #fbcfe8); }
+      .rec p { margin: 0; font-size: 12px; line-height: 1.5; }
+      .rec small { color: #9499a0; font-size: 10px; }
+    </style>
+  </head>
+  <body>
+    <header class="nav">
+      <span class="logo">bilibili</span>
+      <span class="nav-links"><span>首页</span><span>番剧</span><span>直播</span><span>游戏中心</span></span>
+      <span class="search"></span>
+      <span class="avatar"></span>
+    </header>
+    <div class="layout">
+      <main class="main">
+        <div class="player">
+          <video controls muted></video>
+          <span class="play">▶</span>
+          <div class="controls"><span>▶</span><span>00:00 / 12:34</span><span class="bar"></span><span>自动</span><span>字幕</span><span>1080P</span><span>全屏</span></div>
+        </div>
+        <h1 class="title">测试视频：把字幕变成 AI 笔记</h1>
+        <div class="meta"><span>12.3万播放</span><span>2026-11-15 08:00:00</span><span>测试UP主</span></div>
+        <div class="desc">这是一个用于测试字幕提取、AI 总结和导出功能的本地模拟页面。</div>
+      </main>
+      <aside class="side">
+        <div class="card"><h3>相关推荐</h3>
+          <div class="rec"><span class="thumb"></span><p>如何做一份真正有用的视频笔记<br /><small>测试账号 · 3.2万播放</small></p></div>
+          <div class="rec"><span class="thumb"></span><p>浏览器扩展开发入门<br /><small>测试账号 · 1.8万播放</small></p></div>
+        </div>
+        <div class="card"><h3>视频标签</h3><p style="color:#61666d;font-size:12px;">B站 · 字幕 · AI · 总结</p></div>
+      </aside>
+    </div>
+    <script>
+      window.__INITIAL_STATE__ = {
+        videoData: {
+          aid: 123456,
+          bvid: 'BV1GJ411x7h7',
+          cid: 7654321,
+          title: '测试视频：把字幕变成 AI 笔记',
+          duration: 754,
+          pic: '',
+          owner: { name: '测试UP主' },
+          pages: [{ cid: 7654321, page: 1, part: '正文', duration: 754 }],
+          subtitle: { list: [] }
+        }
+      };
+    </script>
+  </body>
+</html>
