@@ -495,6 +495,27 @@ ${notes}${customRequirement(config)}`,
           // with the compatible spelling instead of making the user debug it.
           if (response.status === 400 && attempt < opts.retries) {
             if (
+              /max_tokens|max_completion_tokens/i.test(text) &&
+              /(too large|exceed|maximum|greater than|out of range)/i.test(text)
+            ) {
+              const key = requestDefaults.max_completion_tokens
+                ? 'max_completion_tokens'
+                : 'max_tokens';
+              const current = Number(requestDefaults[key]) || 0;
+              const advertised =
+                text.match(/\bmaximum\b[^\d]{0,24}(\d{3,6})/i) ||
+                text.match(/\b(?:max|limit)\b[^\d]{0,24}(\d{3,6})/i);
+              const advertisedMax = advertised ? Number(advertised[1]) : 0;
+              const fallback =
+                advertisedMax > 0 && advertisedMax < current
+                  ? advertisedMax
+                  : Math.max(1024, Math.floor(current / 4));
+              if (current > 1024 && fallback < current) {
+                requestDefaults[key] = fallback;
+                continue;
+              }
+            }
+            if (
               opts.stream &&
               /stream/i.test(text) &&
               /(unsupported|not supported|unknown|unrecognized|invalid)/i.test(text)
@@ -585,6 +606,22 @@ ${notes}${customRequirement(config)}`,
    * Retry a truncated/empty answer with a larger output budget instead of
    * silently accepting only some subtitle chunks.
    */
+  const MAX_OUTPUT_TOKENS = 30000;
+
+  function budgetsForChars(chars, minimum) {
+    const base = Math.max(
+      minimum || 3000,
+      Math.min(MAX_OUTPUT_TOKENS, Math.ceil((Number(chars) || 0) * 3)),
+    );
+    return Array.from(
+      new Set([
+        base,
+        Math.min(MAX_OUTPUT_TOKENS, Math.ceil(base * 1.5)),
+        Math.min(MAX_OUTPUT_TOKENS, base * 2),
+      ]),
+    );
+  }
+
   async function callChatWithBudgets(options, budgets) {
     const limits = Array.isArray(budgets) && budgets.length ? budgets : [3000];
     let last = null;
@@ -655,7 +692,7 @@ ${notes}${customRequirement(config)}`,
           },
           streamOpts,
         ),
-        [3000, 5000, 7000],
+        budgetsForChars((chunk.text || '').length, 3000),
       );
     } catch (error) {
       if (error.code === 'OUTPUT_TRUNCATED' && depth < 3) {
@@ -743,7 +780,7 @@ ${notes}${customRequirement(config)}`,
           signal,
           ...streamOptions('final', 1, 1),
         },
-        [4000, 6000, 8000],
+        budgetsForChars((chunks[0].text || '').length, 4000),
       );
       calls += 1;
       addUsage(response.usage);
@@ -810,7 +847,7 @@ ${notes}${customRequirement(config)}`,
                 signal,
                 ...streamOptions('reduce', round, round),
               },
-              [3000, 5000, 7000],
+              budgetsForChars(group.length, 3000),
             );
           } catch (error) {
             throw new Error(`合并第 ${Math.floor(index / 2) + 1} 组分段笔记失败：${error.message}`);
@@ -842,7 +879,7 @@ ${notes}${customRequirement(config)}`,
           signal,
           ...streamOptions('final', 1, 1),
         },
-        [5000, 7000, 8000],
+        budgetsForChars(notes.join('\n\n').length, 5000),
       );
       calls += 1;
       addUsage(response.usage);

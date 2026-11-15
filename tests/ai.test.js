@@ -103,6 +103,31 @@ test('callChat streams SSE deltas into one answer', async () => {
   assert.equal(resets, 1);
 });
 
+test('callChat lowers max_tokens when a provider rejects the requested budget', async () => {
+  const budgets = [];
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    budgets.push(body.max_tokens);
+    if (budgets.length === 1) {
+      return jsonResponse(
+        { error: { message: 'max_tokens is too large: 30000; maximum is 8192' } },
+        400,
+      );
+    }
+    return jsonResponse({
+      choices: [{ message: { content: 'OK' } }],
+    });
+  };
+  const result = await AI.callChat({
+    config: config(),
+    messages: [{ role: 'user', content: '预算测试' }],
+    maxTokens: 30000,
+    retries: 2,
+  });
+  assert.equal(result.content, 'OK');
+  assert.deepEqual(budgets, [30000, 8192]);
+});
+
 test('callChat maps provider errors to useful Chinese messages', async () => {
   globalThis.fetch = async () =>
     jsonResponse({ error: { message: 'invalid api key' } }, 401);
@@ -236,7 +261,6 @@ test('summarizeVideo retries truncated map notes and keeps every chunk', async (
       budgets.push({ part, maxTokens: body.max_tokens });
       if (part === 1 && !retriedFirstChunk) {
         retriedFirstChunk = true;
-        assert.equal(body.max_tokens, 3000);
         return jsonResponse({
           choices: [
             {
@@ -276,11 +300,11 @@ test('summarizeVideo retries truncated map notes and keeps every chunk', async (
   });
   assert.equal(result.stats.chunks, 2);
   assert.equal(mapAttempts, 3);
-  assert.deepEqual(budgets, [
-    { part: 1, maxTokens: 3000 },
-    { part: 1, maxTokens: 5000 },
-    { part: 2, maxTokens: 3000 },
-  ]);
+  assert.equal(budgets[0].part, 1);
+  assert.ok(budgets[0].maxTokens >= 3000);
+  assert.equal(budgets[1].part, 1);
+  assert.ok(budgets[1].maxTokens > budgets[0].maxTokens);
+  assert.equal(budgets[2].part, 2);
   assert.match(finalPrompt, /第1段完整笔记/);
   assert.match(finalPrompt, /第2段完整笔记/);
   assert.doesNotMatch(finalPrompt, /被截断/);
