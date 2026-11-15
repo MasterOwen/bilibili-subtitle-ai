@@ -921,6 +921,74 @@ textarea {
   transition: width 0.35s ease;
 }
 
+.bsai-stream {
+  flex: none;
+  max-height: 190px;
+  margin-top: 9px;
+  overflow: hidden;
+  border: 1px solid rgba(162, 92, 244, 0.26);
+  border-radius: 10px;
+  background: rgba(10, 12, 20, 0.5);
+}
+
+.bsai-stream[hidden] {
+  display: none !important;
+}
+
+.bsai-stream-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  color: #c7cbe0;
+  font-size: 10px;
+}
+
+.bsai-stream-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  color: #fb9ab5;
+  font-size: 9px;
+}
+
+.bsai-stream-badge i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #fb7299;
+  box-shadow: 0 0 6px rgba(251, 114, 153, 0.8);
+  animation: bsai-pulse 1.4s ease-in-out infinite;
+}
+
+.bsai-stream pre {
+  max-height: 155px;
+  margin: 0;
+  padding: 9px 10px 12px;
+  overflow-y: auto;
+  color: #b9c0d4;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-width: thin;
+  scrollbar-color: #3b4050 transparent;
+}
+
+@keyframes bsai-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .bsai-summary {
   flex: 1;
   min-height: 0;

@@ -155,6 +155,14 @@
             <div class="bsai-progress-bar"><i data-el="progressBar"></i></div>
           </div>
 
+          <div class="bsai-stream" data-el="aiStream" hidden>
+            <div class="bsai-stream-head">
+              <span data-el="streamPhase">AI 正在输出…</span>
+              <span class="bsai-stream-badge"><i></i>实时</span>
+            </div>
+            <pre data-el="streamText" aria-label="AI 实时输出"></pre>
+          </div>
+
           <div class="bsai-summary" data-el="summary" hidden></div>
           <div class="bsai-summary-meta" data-el="summaryMeta" hidden></div>
           <div class="bsai-empty" data-el="aiEmpty" hidden></div>
@@ -193,6 +201,9 @@
     summaryGeneratedAt: null,
     summaryStats: null,
     summaryLoading: false,
+    streamText: '',
+    streamPhase: '',
+    streamTimer: null,
     promptCopying: false,
     summaryToken: 0,
     summaryPort: null,
@@ -598,6 +609,7 @@
     state.summaryGeneratedAt = null;
     state.summaryStats = null;
     state.aiError = '';
+    resetAiStream();
     if (state.refs.summary) {
       state.refs.summary.hidden = true;
       state.refs.summary.replaceChildren();
@@ -1147,6 +1159,62 @@
     if (state.refs.progressBar) state.refs.progressBar.style.width = `${Math.max(2, Math.min(100, percent))}%`;
   }
 
+  function renderAiStream() {
+    const refs = state.refs;
+    if (!refs.aiStream || !refs.streamText) return;
+    const pre = refs.streamText;
+    const nearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+    pre.textContent = state.streamText;
+    if (nearBottom) pre.scrollTop = pre.scrollHeight;
+    refs.aiStream.hidden = false;
+    if (refs.streamPhase) refs.streamPhase.textContent = state.streamPhase || 'AI 正在输出…';
+  }
+
+  function scheduleAiStreamRender() {
+    if (state.streamTimer) return;
+    state.streamTimer = setTimeout(() => {
+      state.streamTimer = null;
+      renderAiStream();
+    }, 60);
+  }
+
+  function appendAiStream(delta) {
+    if (!delta || typeof delta !== 'object') return;
+    const phase = delta.phase;
+    if (phase === 'map') {
+      state.streamPhase = `第 ${delta.current || 1}/${delta.total || 1} 段 · 正在提炼信息笔记`;
+    } else if (phase === 'reduce') {
+      state.streamPhase = `正在合并分段笔记 · 第 ${delta.current || 1} 轮`;
+    } else if (phase === 'final') {
+      state.streamPhase = '正在生成最终总结';
+    } else {
+      state.streamPhase = 'AI 正在输出…';
+    }
+    if (delta.reset) {
+      state.streamText = '';
+    }
+    if (typeof delta.text === 'string' && delta.text) {
+      state.streamText += delta.text;
+      if (state.streamText.length > 40000) {
+        state.streamText = state.streamText.slice(-40000);
+      }
+    }
+    if (delta.reset) renderAiStream();
+    else scheduleAiStreamRender();
+  }
+
+  function resetAiStream() {
+    if (state.streamTimer) {
+      clearTimeout(state.streamTimer);
+      state.streamTimer = null;
+    }
+    state.streamText = '';
+    state.streamPhase = '';
+    if (state.refs.aiStream) state.refs.aiStream.hidden = true;
+    if (state.refs.streamText) state.refs.streamText.textContent = '';
+    if (state.refs.streamPhase) state.refs.streamPhase.textContent = '';
+  }
+
   function armSummaryWatchdog() {
     clearTimeout(state.summaryWatchdog);
     state.summaryWatchdog = setTimeout(() => {
@@ -1165,6 +1233,7 @@
       }
       state.summaryPort = null;
       if (state.refs.progress) state.refs.progress.hidden = true;
+      resetAiStream();
       state.aiError = 'AI 响应超时，请检查网络或换用更快的模型后重试。';
       setStatus(state.refs.aiStatus, state.aiError, 'error');
       renderAiEmpty();
@@ -1191,9 +1260,9 @@
 
   function cleanupSummaryPort() {
     stopSummaryHeartbeat();
+    resetAiStream();
     clearTimeout(state.summaryWatchdog);
-    state.summaryWatchdog = null;
-    if (state.summaryPort) {
+    state.summaryWatchdog = null;    if (state.summaryPort) {
       try {
         state.summaryPort.disconnect();
       } catch (_) {
@@ -1231,6 +1300,7 @@
       return;
     }
     state.aiError = '';
+    resetAiStream();
     let status = state.aiStatus;
     if (!status || Date.now() - state.aiStatusAt > 30000) status = await refreshAiStatus(true);
     if (!status || !status.configured) {
@@ -1282,6 +1352,11 @@
       if (token !== state.summaryToken) return;
       if (!message || typeof message !== 'object') return;
       if (message.type === 'pong') {
+        armSummaryWatchdog();
+        return;
+      }
+      if (message.type === 'delta') {
+        appendAiStream(message.delta || {});
         armSummaryWatchdog();
         return;
       }
@@ -1365,6 +1440,7 @@
       setStatus(state.refs.aiStatus, state.aiError, 'error');
       state.summaryPort = null;
       clearTimeout(state.summaryWatchdog);
+      resetAiStream();
       renderAiEmpty();
       updateAiButtons();
     });
@@ -1578,6 +1654,7 @@
     state.summaryToken += 1;
     state.summaryLoading = false;
     stopSummaryHeartbeat();
+    resetAiStream();
     clearTimeout(state.summaryWatchdog);
     if (state.summaryPort) {
       try {

@@ -98,10 +98,10 @@
     }
   }
 
-  function requestHeaders(config, sessionId) {
+  function requestHeaders(config, sessionId, stream) {
     const headers = {
       'Content-Type': 'application/json',
-      Accept: 'application/json',
+      Accept: stream ? 'text/event-stream' : 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
     };
     if (sessionId) headers['x-opencode-session'] = sessionId;
@@ -147,19 +147,20 @@
     return lines.join('\n');
   }
 
-  function chunkMessages(video, chunk, index, total, config) {
+  function chunkMessages(video, chunk, index, total, config, partLabel) {
+    const label = partLabel || `第 ${index + 1}/${total} 部分`;
     return [
       { role: 'system', content: systemPrompt(config) },
       {
         role: 'user',
         content: `${videoHeader(video)}
 
-下面是完整视频字幕的第 ${index + 1}/${total} 部分，时间范围约 ${U.formatClock(
+下面是完整视频字幕的${label}，时间范围约 ${U.formatClock(
           chunk.from,
         )}–${U.formatClock(chunk.to)}。
 
 请为这一部分写“信息笔记”：
-- 用 Markdown 无序列表输出 5-12 条；
+- 用 Markdown 无序列表输出 4-8 条，每条尽量控制在 60 字以内；
 - 每条尽量以 \`[mm:ss]\` 时间点开头；
 - 保留论点、方法、数据、例子、结论和重要原话；
 - 抓具体信息，不要写“本段介绍了……”之类的空话；
@@ -352,8 +353,99 @@ ${notes}${customRequirement(config)}`,
     };
   }
 
+  function textFromContent(value) {
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+      return value
+        .map((part) => {
+          if (typeof part === 'string') return part;
+          if (part && typeof part.text === 'string') return part.text;
+          return '';
+        })
+        .join('');
+    }
+    return '';
+  }
+
+  function streamDelta(text, onDelta) {
+    if (!text || typeof onDelta !== 'function') return;
+    try {
+      onDelta(text);
+    } catch (_) {
+      /* a UI callback must not break the stream */
+    }
+  }
+
+  async function readStreamResponse(response, opts, totalUsage) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    let finishReason = '';
+
+    function consume(line) {
+      const trimmed = line.replace(/\r$/, '').trim();
+      if (!trimmed.startsWith('data:')) return;
+      const data = trimmed.slice(5).trim();
+      if (!data || data === '[DONE]') return;
+      let payload;
+      try {
+        payload = JSON.parse(data);
+      } catch (_) {
+        return;
+      }
+      if (payload && payload.error) {
+        throw new Error(`AI 服务返回错误：${providerMessage(data) || '未知错误'}`);
+      }
+      if (payload && payload.usage) {
+        const usage = normalizeUsage(payload.usage);
+        totalUsage.promptTokens = usage.promptTokens;
+        totalUsage.completionTokens = usage.completionTokens;
+        totalUsage.totalTokens = usage.totalTokens || usage.promptTokens + usage.completionTokens;
+      }
+      const choice = payload && Array.isArray(payload.choices) ? payload.choices[0] : null;
+      if (!choice) return;
+      if (choice.finish_reason) finishReason = String(choice.finish_reason);
+      const piece =
+        (choice.delta && textFromContent(choice.delta.content)) ||
+        (choice.delta && textFromContent(choice.delta.text)) ||
+        (choice.message && textFromContent(choice.message.content));
+      if (piece) {
+        content += piece;
+        streamDelta(piece, opts.onDelta);
+      }
+    }
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline;
+        while ((newline = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, newline);
+          buffer = buffer.slice(newline + 1);
+          consume(line);
+        }
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) consume(buffer);
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+
+    return { content: content.trim(), usage: totalUsage, raw: null, finishReason };
+  }
+
   async function callChat(options) {
-    const opts = Object.assign({ maxTokens: 3000, timeoutMs: 180000, retries: 2, temperature: 0.3 }, options || {});
+    const opts = Object.assign(
+      { maxTokens: 3000, timeoutMs: 180000, retries: 2, temperature: 0.3, stream: false },
+      options || {},
+    );
     const config = opts.config || {};
     if (!config.apiBaseUrl) throw new Error('尚未配置 AI 接口地址');
     if (!config.apiKey) throw new Error('尚未配置 API Key');
@@ -369,11 +461,18 @@ ${notes}${customRequirement(config)}`,
       messages: opts.messages,
       temperature: opts.temperature,
       max_tokens: opts.maxTokens,
-      stream: false,
+      stream: Boolean(opts.stream),
     };
 
     for (let attempt = 0; attempt <= opts.retries; attempt += 1) {
       throwIfAborted(opts.signal);
+      if (opts.stream && typeof opts.onReset === 'function') {
+        try {
+          opts.onReset();
+        } catch (_) {
+          /* ignore */
+        }
+      }
       const body = Object.assign({}, requestDefaults);
       const linked = combinedSignal(opts.signal, opts.timeoutMs);
       try {
@@ -381,13 +480,13 @@ ${notes}${customRequirement(config)}`,
           method: 'POST',
           credentials: 'omit',
           cache: 'no-store',
-          headers: requestHeaders(config, sessionId),
+          headers: requestHeaders(config, sessionId, opts.stream),
           body: JSON.stringify(body),
           signal: linked.signal,
         });
 
-        const text = await response.text();
         if (!response.ok) {
+          const text = await response.text();
           const error = new Error(friendlyHttpError(response.status, text));
           error.status = response.status;
           error.providerText = text;
@@ -395,6 +494,15 @@ ${notes}${customRequirement(config)}`,
           // A few newer OpenAI models reject temperature / max_tokens. Retry once
           // with the compatible spelling instead of making the user debug it.
           if (response.status === 400 && attempt < opts.retries) {
+            if (
+              opts.stream &&
+              /stream/i.test(text) &&
+              /(unsupported|not supported|unknown|unrecognized|invalid)/i.test(text)
+            ) {
+              opts.stream = false;
+              requestDefaults.stream = false;
+              continue;
+            }
             if (/max_tokens/i.test(text) && /(unsupported|not supported|unknown|unrecognized)/i.test(text)) {
               requestDefaults.max_completion_tokens = requestDefaults.max_tokens;
               delete requestDefaults.max_tokens;
@@ -408,6 +516,15 @@ ${notes}${customRequirement(config)}`,
           throw error;
         }
 
+        const contentType =
+          response.headers && typeof response.headers.get === 'function'
+            ? String(response.headers.get('content-type') || '')
+            : '';
+        if (opts.stream && response.body && /text\/event-stream/i.test(contentType)) {
+          return await readStreamResponse(response, opts, totalUsage);
+        }
+
+        const text = await response.text();
         let payload;
         try {
           payload = JSON.parse(text);
@@ -480,9 +597,13 @@ ${notes}${customRequirement(config)}`,
       if (response.content && response.finishReason !== 'length') return response;
     }
     if (last && last.content) {
-      throw new Error('AI 输出达到长度上限，分段笔记可能不完整；请减小分段长度后重试');
+      const error = new Error('AI 输出达到长度上限，分段笔记可能不完整；请减小分段长度后重试');
+      error.code = 'OUTPUT_TRUNCATED';
+      throw error;
     }
-    throw new Error('AI 没有返回有效内容，请重试或换用其他模型');
+    const error = new Error('AI 没有返回有效内容，请重试或换用其他模型');
+    error.code = 'EMPTY_OUTPUT';
+    throw error;
   }
 
   function report(onProgress, payload) {
@@ -494,13 +615,100 @@ ${notes}${customRequirement(config)}`,
     }
   }
 
+  function splitChunkText(chunk) {
+    const text = String((chunk && chunk.text) || '');
+    const lines = text.split('\n').filter(Boolean);
+    if (lines.length >= 2) {
+      const mid = Math.ceil(lines.length / 2);
+      return [
+        Object.assign({}, chunk, { text: lines.slice(0, mid).join('\n') }),
+        Object.assign({}, chunk, { text: lines.slice(mid).join('\n') }),
+      ];
+    }
+    if (text.length < 200) return null;
+    const mid = Math.floor(text.length / 2);
+    return [
+      Object.assign({}, chunk, { text: text.slice(0, mid) }),
+      Object.assign({}, chunk, { text: text.slice(mid) }),
+    ];
+  }
+
+  function mergeUsage(left, right) {
+    return {
+      promptTokens: (left.promptTokens || 0) + (right.promptTokens || 0),
+      completionTokens: (left.completionTokens || 0) + (right.completionTokens || 0),
+      totalTokens: (left.totalTokens || 0) + (right.totalTokens || 0),
+    };
+  }
+
+  async function summarizeChunk(video, chunk, partLabel, config, sessionId, signal, streamOpts, depth) {
+    try {
+      return await callChatWithBudgets(
+        Object.assign(
+          {
+            config,
+            messages: chunkMessages(video, chunk, 0, 1, config, partLabel),
+            sessionId,
+            timeoutMs: 180000,
+            retries: 2,
+            signal,
+          },
+          streamOpts,
+        ),
+        [3000, 5000, 7000],
+      );
+    } catch (error) {
+      if (error.code === 'OUTPUT_TRUNCATED' && depth < 3) {
+        const halves = splitChunkText(chunk);
+        if (halves) {
+          const left = await summarizeChunk(
+            video,
+            halves[0],
+            `${partLabel}（上）`,
+            config,
+            sessionId,
+            signal,
+            streamOpts,
+            depth + 1,
+          );
+          const right = await summarizeChunk(
+            video,
+            halves[1],
+            `${partLabel}（下）`,
+            config,
+            sessionId,
+            signal,
+            streamOpts,
+            depth + 1,
+          );
+          return {
+            content: `${left.content}\n\n${right.content}`,
+            usage: mergeUsage(left.usage, right.usage),
+            finishReason: '',
+          };
+        }
+      }
+      throw error;
+    }
+  }
+
   async function summarizeVideo(options) {
     const video = options.video || {};
     const segments = Array.isArray(options.segments) ? options.segments : [];
     const config = options.config;
     const signal = options.signal;
     const onProgress = options.onProgress;
+    const onDelta = options.onDelta;
     if (!segments.length) throw new Error('当前没有可总结的字幕');
+
+    function streamOptions(phase, current, total) {
+      if (typeof onDelta !== 'function') return {};
+      return {
+        stream: true,
+        onDelta: (text) => onDelta({ phase, current, total, text }),
+        onReset: () => onDelta({ phase, current, total, text: '', reset: true }),
+      };
+    }
 
     const chunks = U.chunkSegments(segments, config.chunkChars || 7000);
     if (!chunks.length) throw new Error('字幕内容为空，无法总结');
@@ -533,6 +741,7 @@ ${notes}${customRequirement(config)}`,
           timeoutMs: 240000,
           retries: 2,
           signal,
+          ...streamOptions('final', 1, 1),
         },
         [4000, 6000, 8000],
       );
@@ -551,16 +760,15 @@ ${notes}${customRequirement(config)}`,
         });
         let response;
         try {
-          response = await callChatWithBudgets(
-            {
-              config,
-              messages: chunkMessages(video, chunks[index], index, chunks.length, config),
-              sessionId,
-              timeoutMs: 180000,
-              retries: 2,
-              signal,
-            },
-            [3000, 5000, 7000],
+          response = await summarizeChunk(
+            video,
+            chunks[index],
+            `第 ${index + 1}/${chunks.length} 部分`,
+            config,
+            sessionId,
+            signal,
+            streamOptions('map', index + 1, chunks.length),
+            0,
           );
         } catch (error) {
           throw new Error(`第 ${index + 1}/${chunks.length} 段字幕提炼失败：${error.message}`);
@@ -600,6 +808,7 @@ ${notes}${customRequirement(config)}`,
                 timeoutMs: 180000,
                 retries: 2,
                 signal,
+                ...streamOptions('reduce', round, round),
               },
               [3000, 5000, 7000],
             );
@@ -631,6 +840,7 @@ ${notes}${customRequirement(config)}`,
           timeoutMs: 240000,
           retries: 2,
           signal,
+          ...streamOptions('final', 1, 1),
         },
         [5000, 7000, 8000],
       );

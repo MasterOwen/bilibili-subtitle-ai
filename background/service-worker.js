@@ -486,6 +486,7 @@ async function runSummary(port, controller, payload) {
     config: settings,
     signal: controller.signal,
     onProgress: (progress) => safePost(port, { type: 'progress', progress }),
+    onDelta: (delta) => safePost(port, { type: 'delta', delta }),
   });
 }
 

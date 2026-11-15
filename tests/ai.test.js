@@ -63,6 +63,46 @@ test('callChat sends a Chat Completions request and extracts content', async () 
   assert.equal(result.usage.totalTokens, 15);
 });
 
+test('callChat streams SSE deltas into one answer', async () => {
+  const encoder = new TextEncoder();
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    assert.equal(body.stream, true);
+    assert.equal(init.headers.Accept, 'text/event-stream');
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode('data: {"choices":[{"delta":{"content":"第一"}}]}\n'),
+        );
+        controller.enqueue(
+          encoder.encode(
+            '\ndata: {"choices":[{"delta":{"content":"段"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+    return new Response(stream, {
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    });
+  };
+  const deltas = [];
+  let resets = 0;
+  const result = await AI.callChat({
+    config: config(),
+    messages: [{ role: 'user', content: '流式测试' }],
+    stream: true,
+    onDelta: (text) => deltas.push(text),
+    onReset: () => {
+      resets += 1;
+    },
+  });
+  assert.equal(result.content, '第一段');
+  assert.equal(result.finishReason, 'stop');
+  assert.deepEqual(deltas, ['第一', '段']);
+  assert.equal(resets, 1);
+});
+
 test('callChat maps provider errors to useful Chinese messages', async () => {
   globalThis.fetch = async () =>
     jsonResponse({ error: { message: 'invalid api key' } }, 401);
@@ -244,6 +284,87 @@ test('summarizeVideo retries truncated map notes and keeps every chunk', async (
   assert.match(finalPrompt, /第1段完整笔记/);
   assert.match(finalPrompt, /第2段完整笔记/);
   assert.doesNotMatch(finalPrompt, /被截断/);
+});
+
+test('summarizeVideo splits a chunk that still exceeds the output budget', async () => {
+  const segments = [];
+  for (let i = 0; i < 120; i += 1) {
+    segments.push({
+      from: i * 2,
+      to: i * 2 + 1,
+      content: '这是一个用于测试超长分段拆分的字幕句子，包含足够的长度来触发分段。',
+    });
+  }
+  let mapCalls = 0;
+  let finalPrompt = '';
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const user = body.messages[1].content;
+    if (user.includes('信息笔记')) {
+      mapCalls += 1;
+      if (user.includes('第 1/2 部分（上）')) {
+        return jsonResponse({
+          choices: [
+            {
+              message: { content: '- [00:00] 上半段完整笔记' },
+              finish_reason: 'stop',
+            },
+          ],
+        });
+      }
+      if (user.includes('第 1/2 部分（下）')) {
+        return jsonResponse({
+          choices: [
+            {
+              message: { content: '- [00:01] 下半段完整笔记' },
+              finish_reason: 'stop',
+            },
+          ],
+        });
+      }
+      if (user.includes('第 1/2 部分')) {
+        return jsonResponse({
+          choices: [
+            {
+              message: { content: '- 一直截断' },
+              finish_reason: 'length',
+            },
+          ],
+        });
+      }
+      return jsonResponse({
+        choices: [
+          {
+            message: { content: '- [00:02] 第二段完整笔记' },
+            finish_reason: 'stop',
+          },
+        ],
+      });
+    }
+    if (user.includes('分段笔记')) {
+      finalPrompt = user;
+      return jsonResponse({
+        choices: [
+          {
+            message: { content: '## 一句话概括\n拆分后的完整总结' },
+            finish_reason: 'stop',
+          },
+        ],
+      });
+    }
+    throw new Error(`unexpected prompt: ${user.slice(0, 60)}`);
+  };
+
+  const result = await AI.summarizeVideo({
+    video: { title: '长视频', duration: 240, owner: 'UP' },
+    segments,
+    config: config({ chunkChars: 3000 }),
+  });
+  assert.equal(result.stats.chunks, 2);
+  assert.equal(mapCalls, 6);
+  assert.match(finalPrompt, /上半段完整笔记/);
+  assert.match(finalPrompt, /下半段完整笔记/);
+  assert.match(finalPrompt, /第二段完整笔记/);
 });
 
 test('summarizeVideo fails instead of silently dropping an empty chunk note', async () => {
