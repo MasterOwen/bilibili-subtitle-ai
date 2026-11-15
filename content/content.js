@@ -131,9 +131,10 @@
         <section class="bsai-view" data-view="ai" hidden>
           <div class="bsai-ai-hero">
             <div class="bsai-ai-orb">${icon('sparkles')}</div>
-            <div>
+            <div class="bsai-ai-copy">
               <h3>AI 视频总结</h3>
               <p data-el="aiHint">先加载字幕，再生成总结。</p>
+              <div class="bsai-style-picker" data-el="stylePicker" role="group" aria-label="总结偏好"></div>
             </div>
           </div>
 
@@ -201,6 +202,8 @@
     summaryGeneratedAt: null,
     summaryStats: null,
     summaryLoading: false,
+    summaryStyle: '',
+    styleSaving: false,
     streamText: '',
     streamPhase: '',
     streamTimer: null,
@@ -258,6 +261,7 @@
       state.refs[node.dataset.el] = node;
     });
     bindPanelEvents();
+    renderStylePicker();
     state.refs.cover.addEventListener('error', () => {
       state.refs.cover.hidden = true;
     });
@@ -282,6 +286,12 @@
 
     refs.panel.addEventListener('click', onPanelClick);
     refs.search.addEventListener('input', onSearchInput);
+    if (refs.stylePicker) {
+      refs.stylePicker.addEventListener('click', (event) => {
+        const chip = event.target.closest('[data-style]');
+        if (chip && refs.stylePicker.contains(chip)) applySummaryStyle(chip.dataset.style);
+      });
+    }
 
     refs.panel.addEventListener('click', (event) => {
       const row = event.target.closest('.bsai-sub-row');
@@ -558,14 +568,89 @@
     }
   }
 
+  function currentSummaryStyle() {
+    const value =
+      state.summaryStyle ||
+      (state.aiStatus && state.aiStatus.style) ||
+      'structured';
+    if (!Settings || !Array.isArray(Settings.STYLES)) return value;
+    return Settings.STYLES.some((item) => item.value === value) ? value : 'structured';
+  }
+
+  function summaryStyleLabel(value) {
+    if (!Settings || !Array.isArray(Settings.STYLES)) return '结构化摘要';
+    const style = Settings.STYLES.find((item) => item.value === value);
+    return style ? style.label : '结构化摘要';
+  }
+
+  function renderStylePicker() {
+    const picker = state.refs.stylePicker;
+    if (!picker || !Settings || !Array.isArray(Settings.STYLES)) return;
+    if (!picker.childElementCount) {
+      const fragment = document.createDocumentFragment();
+      for (const item of Settings.STYLES) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'bsai-style-chip';
+        button.dataset.style = item.value;
+        button.title = item.hint;
+        button.textContent = item.label;
+        fragment.appendChild(button);
+      }
+      picker.replaceChildren(fragment);
+    }
+    updateStylePicker();
+  }
+
+  function updateStylePicker() {
+    const picker = state.refs.stylePicker;
+    if (!picker) return;
+    const active = currentSummaryStyle();
+    for (const button of picker.querySelectorAll('[data-style]')) {
+      const selected = button.dataset.style === active;
+      button.classList.toggle('is-active', selected);
+      button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      button.disabled = state.styleSaving;
+    }
+  }
+
+  async function applySummaryStyle(style) {
+    if (state.styleSaving) return;
+    if (!Settings || !Array.isArray(Settings.STYLES)) return;
+    if (!Settings.STYLES.some((item) => item.value === style)) return;
+    const previous = currentSummaryStyle();
+    if (previous === style) return;
+    const label = summaryStyleLabel(style);
+    state.styleSaving = true;
+    state.summaryStyle = style;
+    updateStylePicker();
+    updateAiCopy();
+    try {
+      const response = await sendRuntimeMessage({ type: 'SET_STYLE', style }, 8000);
+      if (!response || !response.ok) {
+        throw new Error((response && response.error) || '保存失败');
+      }
+      const suffix = state.summaryLoading ? '，下次生成生效' : state.summary ? '，重新生成后生效' : '';
+      showToast(`总结偏好已切换为「${label}」${suffix}`, 'success');
+    } catch (error) {
+      state.summaryStyle = previous;
+      showToast(`偏好保存失败：${error.message}`, 'error');
+    } finally {
+      state.styleSaving = false;
+      updateStylePicker();
+      updateAiCopy();
+    }
+  }
+
   function updateAiCopy() {
     const refs = state.refs;
     if (!refs.aiHint) return;
+    const styleLabel = summaryStyleLabel(currentSummaryStyle());
     if (state.segments.length) {
       if (state.aiStatus && state.aiStatus.configured) {
-        refs.aiHint.textContent = `将把 ${state.segments.length} 条字幕发送给 AI（${state.aiStatus.model}）生成结构化总结。`;
+        refs.aiHint.textContent = `将把 ${state.segments.length} 条字幕发送给 AI（${state.aiStatus.model}）生成${styleLabel}。`;
       } else {
-        refs.aiHint.textContent = `已加载 ${state.segments.length} 条字幕。配置 AI 服务可直接生成，也可以复制提示词到其他网页 AI。`;
+        refs.aiHint.textContent = `已加载 ${state.segments.length} 条字幕。当前偏好：${styleLabel}；配置 AI 服务可直接生成，也可以复制提示词到其他网页 AI。`;
       }
     } else {
       refs.aiHint.textContent = '先加载字幕，再生成总结。';
@@ -1075,6 +1160,7 @@
       if (response && response.ok) {
         state.aiStatus = response;
         state.aiStatusAt = Date.now();
+        state.summaryStyle = response.style || state.summaryStyle || 'structured';
       } else if (response) {
         state.aiStatus = { ok: false, configured: false, error: response.error };
       }
@@ -1084,6 +1170,7 @@
       state.aiStatusLoading = false;
     }
     updateAiCopy();
+    updateStylePicker();
     renderAiEmpty();
     updateAiButtons();
     return state.aiStatus;

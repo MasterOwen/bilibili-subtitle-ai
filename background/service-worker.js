@@ -595,6 +595,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((error) => sendResponse(errorResponse(error)));
     return true;
   }
+  if (message.type === 'SET_STYLE') {
+    (async () => {
+      const style = String(message.style || '');
+      if (!Settings.STYLES.some((item) => item.value === style)) {
+        throw new Error('未知的总结偏好');
+      }
+      const settings = await Settings.loadSettings();
+      settings.style = style;
+      const saved = await Settings.saveSettings(settings);
+      return { ok: true, style: saved.style };
+    })()
+      .then(sendResponse)
+      .catch((error) => sendResponse(errorResponse(error)));
+    return true;
+  }
   if (message.type === 'PING') {
     sendResponse({
       ok: true,
