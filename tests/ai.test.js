@@ -77,6 +77,36 @@ test('callChat maps provider errors to useful Chinese messages', async () => {
   );
 });
 
+test('buildManualPrompt returns a self-contained prompt without calling the API', () => {
+  const prompt = AI.buildManualPrompt({
+    video: {
+      title: '测试视频',
+      owner: 'UP主A',
+      duration: 125,
+      pageCount: 2,
+      pageNo: 1,
+    },
+    segments: [
+      { from: 5, to: 8, content: '第一句字幕' },
+      { from: 65, to: 70, content: '第二句字幕' },
+    ],
+    config: config({ style: 'notes', language: 'zh', customPrompt: '请突出操作步骤' }),
+  });
+  assert.match(prompt, /视频标题：测试视频/);
+  assert.match(prompt, /UP 主：UP主A/);
+  assert.match(prompt, /视频时长：02:05/);
+  assert.match(prompt, /分P：P1\/2/);
+  assert.match(prompt, /\[00:05\] 第一句字幕/);
+  assert.match(prompt, /\[01:05\] 第二句字幕/);
+  assert.match(prompt, /输出风格：输出详细、可复习的视频笔记/);
+  assert.match(prompt, /请突出操作步骤/);
+  assert.match(prompt, /请使用简体中文输出/);
+  assert.throws(
+    () => AI.buildManualPrompt({ video: {}, segments: [], config: config() }),
+    /字幕内容为空/,
+  );
+});
+
 test('summarizeVideo uses a single request for short transcripts', async () => {
   let calls = 0;
   globalThis.fetch = async () => {

@@ -193,6 +193,7 @@
     summaryGeneratedAt: null,
     summaryStats: null,
     summaryLoading: false,
+    promptCopying: false,
     summaryToken: 0,
     summaryPort: null,
     summaryWatchdog: null,
@@ -464,6 +465,7 @@
     if (action === 'retry' || action === 'retry-load') loadVideo();
     else if (action === 'settings') openOptions();
     else if (action === 'generate') generateSummary();
+    else if (action === 'copy-prompt') copyPrompt();
     else if (action === 'clear-search') {
       state.search = '';
       if (state.refs.search) state.refs.search.value = '';
@@ -471,7 +473,7 @@
     }
   }
 
-  function showToast(message, type) {
+  function showToast(message, type, duration) {
     const toast = state.refs.toast;
     if (!toast) return;
     toast.textContent = message;
@@ -480,7 +482,7 @@
     clearTimeout(state.toastTimer);
     state.toastTimer = setTimeout(() => {
       toast.classList.remove('is-visible');
-    }, 2800);
+    }, duration || 2800);
   }
 
   function setSubLoading(loading, text) {
@@ -548,8 +550,11 @@
     const refs = state.refs;
     if (!refs.aiHint) return;
     if (state.segments.length) {
-      const model = state.aiStatus && state.aiStatus.configured ? `（${state.aiStatus.model}）` : '';
-      refs.aiHint.textContent = `将把 ${state.segments.length} 条字幕发送给 AI${model} 生成结构化总结。`;
+      if (state.aiStatus && state.aiStatus.configured) {
+        refs.aiHint.textContent = `将把 ${state.segments.length} 条字幕发送给 AI（${state.aiStatus.model}）生成结构化总结。`;
+      } else {
+        refs.aiHint.textContent = `已加载 ${state.segments.length} 条字幕。配置 AI 服务可直接生成，也可以复制提示词到其他网页 AI。`;
+      }
     } else {
       refs.aiHint.textContent = '先加载字幕，再生成总结。';
     }
@@ -1102,9 +1107,12 @@
     if (!state.aiStatus || !state.aiStatus.configured) {
       setEmpty(empty, {
         icon: 'settings',
-        title: '配置 AI 服务',
-        desc: '支持 DeepSeek、OpenAI 及任意 OpenAI Chat Completions 兼容接口。API Key 只保存在本机。',
-        actions: [{ label: '去设置', act: 'settings', icon: 'settings', primary: true }],
+        title: '配置 AI 服务，或复制提示词',
+        desc: '配置 API Key 后可直接在扩展内生成；也可以不配置，复制完整提示词粘贴到 ChatGPT、Claude 等网页 AI 中手动生成。',
+        actions: [
+          { label: '去设置', act: 'settings', icon: 'settings', primary: true },
+          { label: '复制提示词', act: 'copy-prompt', icon: 'copy' },
+        ],
       });
       return;
     }
@@ -1171,6 +1179,26 @@
     state.summaryPort = null;
   }
 
+  function summaryVideoPayload() {
+    return {
+      title: state.video ? state.video.title : '',
+      owner: state.video ? state.video.owner : '',
+      duration: state.video ? state.video.duration : 0,
+      url: state.video ? state.video.url : location.href,
+      bvid: state.video ? state.video.bvid : '',
+      pageNo: state.video ? state.video.pageNo : 1,
+      pageCount: state.video ? state.video.pageCount : 1,
+    };
+  }
+
+  function summarySegmentsPayload() {
+    return state.segments.map((segment) => ({
+      from: segment.from,
+      to: segment.to,
+      content: segment.content,
+    }));
+  }
+
   async function generateSummary() {
     if (state.summaryLoading) return;
     if (!state.segments.length) {
@@ -1184,7 +1212,11 @@
     if (!status || !status.configured) {
       switchTab('ai');
       state.aiError = '';
-      setStatus(state.refs.aiStatus, '还没有配置 AI 服务，请先在设置页填写接口信息。', 'warn');
+      setStatus(
+        state.refs.aiStatus,
+        '还没有配置 AI 服务：可以在设置页配置，或点击下方“复制提示词”到其他网页 AI 生成。',
+        'warn',
+      );
       renderAiEmpty();
       updateAiButtons();
       return;
@@ -1311,20 +1343,8 @@
       port.postMessage({
         type: 'start',
         payload: {
-          video: {
-            title: state.video ? state.video.title : '',
-            owner: state.video ? state.video.owner : '',
-            duration: state.video ? state.video.duration : 0,
-            url: state.video ? state.video.url : location.href,
-            bvid: state.video ? state.video.bvid : '',
-            pageNo: state.video ? state.video.pageNo : 1,
-            pageCount: state.video ? state.video.pageCount : 1,
-          },
-          segments: state.segments.map((segment) => ({
-            from: segment.from,
-            to: segment.to,
-            content: segment.content,
-          })),
+          video: summaryVideoPayload(),
+          segments: summarySegmentsPayload(),
         },
       });
     } catch (error) {
@@ -1336,6 +1356,43 @@
       cleanupSummaryPort();
       renderAiEmpty();
       updateAiButtons();
+    }
+  }
+
+  async function copyPrompt() {
+    if (state.promptCopying) return;
+    if (!state.segments.length) {
+      showToast('请先加载字幕', 'error');
+      return;
+    }
+    state.promptCopying = true;
+    showToast('正在准备提示词…', '', 10000);
+    try {
+      const response = await sendRuntimeMessage(
+        {
+          type: 'BUILD_PROMPT',
+          video: summaryVideoPayload(),
+          segments: summarySegmentsPayload(),
+        },
+        20000,
+      );
+      if (!response || !response.ok || !response.prompt) {
+        throw new Error((response && response.error) || '生成提示词失败');
+      }
+      if (!(await copyText(response.prompt))) {
+        showToast('复制失败，请重试', 'error', 4200);
+        return;
+      }
+      setStatus(
+        state.refs.aiStatus,
+        '提示词已复制，可粘贴到 ChatGPT、Claude 等网页 AI 中并发送。',
+        'success',
+      );
+      showToast('提示词已复制，请到 ChatGPT / Claude 等网页 AI 中粘贴并发送', 'success', 4200);
+    } catch (error) {
+      showToast(error.message || '复制提示词失败', 'error', 4200);
+    } finally {
+      state.promptCopying = false;
     }
   }
 

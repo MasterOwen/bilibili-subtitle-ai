@@ -572,6 +572,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((error) => sendResponse(errorResponse(error)));
     return true;
   }
+  if (message.type === 'BUILD_PROMPT') {
+    (async () => {
+      const config = await Settings.loadSettings();
+      const segments = Array.isArray(message.segments) ? message.segments : [];
+      if (!segments.length) throw new Error('当前没有可总结的字幕');
+      return {
+        ok: true,
+        prompt: AI.buildManualPrompt({
+          video: message.video || {},
+          segments,
+          config,
+        }),
+      };
+    })()
+      .then(sendResponse)
+      .catch((error) => sendResponse(errorResponse(error)));
+    return true;
+  }
   if (message.type === 'PING') {
     sendResponse({
       ok: true,

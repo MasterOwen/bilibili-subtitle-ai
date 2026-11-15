@@ -196,13 +196,9 @@ ${notes}`,
     ];
   }
 
-  function directMessages(video, transcript, config) {
+  function directPrompt(video, transcript, config) {
     const structure = FINAL_STRUCTURES[(config && config.style) || 'structured'] || FINAL_STRUCTURES.structured;
-    return [
-      { role: 'system', content: systemPrompt(config) },
-      {
-        role: 'user',
-        content: `${videoHeader(video)}
+    return `${videoHeader(video)}
 
 下面是带时间戳的完整字幕。请直接写一份完整、忠实、可读的视频总结。
 
@@ -216,9 +212,31 @@ ${notes}`,
 ${structure}${customRequirement(config)}
 
 字幕：
-${transcript}`,
-      },
+${transcript}`;
+  }
+
+  function directMessages(video, transcript, config) {
+    return [
+      { role: 'system', content: systemPrompt(config) },
+      { role: 'user', content: directPrompt(video, transcript, config) },
     ];
+  }
+
+  /**
+   * A single self-contained prompt for pasting into a web AI when the user has
+   * not configured an API key.
+   */
+  function buildManualPrompt(options) {
+    const opts = options || {};
+    const config = opts.config || {};
+    const segments = Array.isArray(opts.segments) ? opts.segments : [];
+    const transcript = U.segmentsToTxt(segments, { timestamps: true, dedupe: true });
+    if (!transcript) throw new Error('字幕内容为空，无法生成提示词');
+    return `${systemPrompt(config)}
+
+---
+
+${directPrompt(opts.video || {}, transcript, config)}`;
   }
 
   function mergeMessages(video, notes, config) {
@@ -607,6 +625,7 @@ ${notes}${customRequirement(config)}`,
     FEATURES: Object.freeze({ openCodeSession: true }),
     summarizeVideo,
     testConnection,
+    buildManualPrompt,
     callChat,
     buildChatCompletionsUrl: (base) => root.BiliSubSettings.buildChatCompletionsUrl(base),
     STYLE_GUIDES,

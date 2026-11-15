@@ -1,6 +1,6 @@
 {
   "name": "bilibili-subtitle-ai",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "description": "Bilibili subtitle downloader and AI summarizer browser extension",
   "scripts": {
