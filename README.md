@@ -17,7 +17,7 @@
   - 总结：`Markdown`、`TXT`
 - **复制**：一键复制字幕文本或总结 Markdown。
 - **可配置**：输出语言、分段长度、自定义提示词、是否在导出文件中包含视频信息。
-- **隐私优先**：API Key 只保存在 `chrome.storage.local`；无统计、无埋点、无远程代码。
+- **隐私优先**：API Key 按服务商分别保存在 `chrome.storage.local`；无统计、无埋点、无远程代码。
 
 ## 截图
 
@@ -68,7 +68,7 @@
 | 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
 | 自定义 | 手动填写 | 手动填写 |
 
-选择服务商后填写 **API Key**，按需修改模型名。支持：
+选择服务商后填写 **API Key**，按需修改模型名。每个服务商的 API Key 按 API 域名分别保存，切换预设时会自动恢复该服务商上次填写的 Key。支持：
 - 填写到版本号的 Base URL，例如 `https://api.openai.com/v1`，扩展会自动拼接 `/chat/completions`。
 - 直接粘贴完整的 `.../chat/completions` 地址。
 - 本地模型服务，例如 Ollama / LM Studio 的 OpenAI 兼容地址。
@@ -145,7 +145,7 @@ Go 端点要求每个请求携带稳定的 `x-opencode-session` 会话标识。�
 
 ### 存储
 
-- 设置和 API Key 保存在 `chrome.storage.local`。
+- 设置和各服务商的 API Key 保存在 `chrome.storage.local`。
 - API Key 不会写入页面 DOM，也不会注入到 B站页面上下文。
 - 页面内容脚本只能通过扩展后台使用 AI 能力，不会直接拿到 API Key。
 

@@ -17,6 +17,7 @@
   const DEFAULTS = Object.freeze({
     apiBaseUrl: 'https://api.deepseek.com/v1',
     apiKey: '',
+    apiKeys: {},
     model: 'deepseek-chat',
     language: 'zh',
     style: 'structured',
@@ -78,6 +79,30 @@
     { value: 'source', label: '跟随字幕语言' },
   ]);
 
+  /**
+   * API keys are stored per API host so switching providers does not carry one
+   * provider's key over to another. Hostnames are the same key used by the
+   * host permission patterns.
+   */
+  function normalizeApiKeys(raw) {
+    const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    const result = {};
+    let count = 0;
+    for (const [rawHost, rawKey] of Object.entries(input)) {
+      if (count >= 20) break;
+      const host = String(rawHost == null ? '' : rawHost)
+        .trim()
+        .toLowerCase()
+        .slice(0, 253);
+      if (!host || /[\s\\/]/.test(host) || host === '__proto__' || host === 'prototype') continue;
+      const key = String(rawKey == null ? '' : rawKey).trim().slice(0, 2000);
+      if (!key) continue;
+      result[host] = key;
+      count += 1;
+    }
+    return result;
+  }
+
   function normalizeSettings(raw) {
     const input = raw && typeof raw === 'object' ? raw : {};
     const pick = (key) => (input[key] === undefined ? DEFAULTS[key] : input[key]);
@@ -87,6 +112,7 @@
     return {
       apiBaseUrl: String(pick('apiBaseUrl') || '').trim().replace(/\/+$/, ''),
       apiKey: String(pick('apiKey') || '').trim(),
+      apiKeys: normalizeApiKeys(pick('apiKeys')),
       model: String(pick('model') || '').trim(),
       language: LANGUAGES.some((item) => item.value === languageValue) ? languageValue : DEFAULTS.language,
       style: STYLES.some((item) => item.value === styleValue) ? styleValue : DEFAULTS.style,
@@ -129,6 +155,22 @@
       throw new Error('API Base URL 必须以 http:// 或 https:// 开头');
     }
     return url;
+  }
+
+  /** Hostname used as the per-provider API key bucket. */
+  function hostnameFor(baseUrl) {
+    try {
+      return assertHttpUrl(baseUrl).hostname.toLowerCase();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function apiKeyForHost(apiKeys, baseUrl) {
+    const host = hostnameFor(baseUrl);
+    if (!host || !apiKeys || typeof apiKeys !== 'object') return '';
+    const value = apiKeys[host];
+    return typeof value === 'string' ? value : '';
   }
 
   /**
@@ -179,6 +221,8 @@
     isConfigured,
     buildChatCompletionsUrl,
     assertHttpUrl,
+    hostnameFor,
+    apiKeyForHost,
     originPatternFor,
     presetForSettings,
   };

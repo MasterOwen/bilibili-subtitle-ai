@@ -8,6 +8,12 @@ test('normalizes and clamps settings', () => {
   const settings = Settings.normalizeSettings({
     apiBaseUrl: ' https://api.example.com/v1/ ',
     apiKey: '  sk-test  ',
+    apiKeys: {
+      ' OpenCode.AI ': '  oc_sk_test  ',
+      'api.deepseek.com': 'sk-deep',
+      'bad host': 'nope',
+      '': 'nope',
+    },
     model: ' model-x ',
     language: 'xx',
     style: 'unknown',
@@ -18,6 +24,10 @@ test('normalizes and clamps settings', () => {
   });
   assert.equal(settings.apiBaseUrl, 'https://api.example.com/v1');
   assert.equal(settings.apiKey, 'sk-test');
+  assert.deepEqual(settings.apiKeys, {
+    'opencode.ai': 'oc_sk_test',
+    'api.deepseek.com': 'sk-deep',
+  });
   assert.equal(settings.model, 'model-x');
   assert.equal(settings.language, 'zh');
   assert.equal(settings.style, 'structured');
@@ -67,6 +77,22 @@ test('creates exact optional host permission patterns', () => {
     Settings.originPatternFor('http://127.0.0.1:11434/v1'),
     'http://127.0.0.1/*',
   );
+});
+
+test('resolves per-provider API keys by hostname', () => {
+  const keys = {
+    'opencode.ai': 'oc_sk_test',
+    'api.deepseek.com': 'sk-deep',
+  };
+  assert.equal(Settings.hostnameFor('https://opencode.ai/inference/go/openai/v1'), 'opencode.ai');
+  assert.equal(Settings.hostnameFor('http://127.0.0.1:11434/v1'), '127.0.0.1');
+  assert.equal(Settings.hostnameFor('not a url'), '');
+  assert.equal(
+    Settings.apiKeyForHost(keys, 'https://opencode.ai/inference/go/openai/v1/chat/completions'),
+    'oc_sk_test',
+  );
+  assert.equal(Settings.apiKeyForHost(keys, 'https://api.openai.com/v1'), '');
+  assert.equal(Settings.apiKeyForHost(null, 'https://opencode.ai/v1'), '');
 });
 
 test('detects provider presets and configuration completeness', () => {

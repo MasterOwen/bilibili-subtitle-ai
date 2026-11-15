@@ -40,9 +40,47 @@
   let activePreset = 'deepseek';
   let testing = false;
   let savedSnapshot = '';
+  let apiKeys = {};
+  let keyHost = '';
 
   function getPresetHost(key) {
     return PRESET_SUBTITLE[key] || '';
+  }
+
+  function rememberKeyForHost(host, value) {
+    if (!host || host === '__proto__' || host === 'prototype') return;
+    const trimmed = String(value == null ? '' : value).trim();
+    if (trimmed) apiKeys[host] = trimmed;
+    else delete apiKeys[host];
+  }
+
+  function captureCurrentKey() {
+    const host = keyHost || Settings.hostnameFor(els.apiBaseUrl.value);
+    rememberKeyForHost(host, els.apiKey.value);
+  }
+
+  function restoreKeyForCurrentHost() {
+    keyHost = Settings.hostnameFor(els.apiBaseUrl.value);
+    els.apiKey.value = Settings.apiKeyForHost(apiKeys, els.apiBaseUrl.value);
+  }
+
+  /**
+   * If the user edited the Base URL without blurring it yet, move the key to
+   * the host it belongs to and load the key saved for the new host.
+   */
+  function syncKeyHostWithBase() {
+    const host = Settings.hostnameFor(els.apiBaseUrl.value);
+    if (!host || host === keyHost) return;
+    rememberKeyForHost(keyHost, els.apiKey.value);
+    keyHost = host;
+    els.apiKey.value = Settings.apiKeyForHost(apiKeys, els.apiBaseUrl.value);
+  }
+
+  function snapshotState() {
+    captureCurrentKey();
+    const orderedKeys = {};
+    for (const host of Object.keys(apiKeys).sort()) orderedKeys[host] = apiKeys[host];
+    return JSON.stringify({ config: readForm(), apiKeys: orderedKeys });
   }
 
   function renderPresets() {
@@ -76,6 +114,7 @@
   }
 
   function selectPreset(key) {
+    captureCurrentKey();
     activePreset = key;
     markActivePreset();
     const preset = Settings.PRESETS[key];
@@ -85,6 +124,7 @@
     }
     els.apiBaseUrl.value = preset.apiBaseUrl;
     els.model.value = preset.model;
+    restoreKeyForCurrentHost();
     clearResult();
   }
 
@@ -164,11 +204,14 @@
     els.txtTimestamps.checked = settings.txtTimestamps;
     els.includeHeader.checked = settings.includeHeader;
     activePreset = Settings.presetForSettings(settings);
+    apiKeys = Object.assign({}, settings.apiKeys || {});
+    keyHost = Settings.hostnameFor(settings.apiBaseUrl);
+    if (keyHost && settings.apiKey) apiKeys[keyHost] = settings.apiKey;
     updateChunkOutput();
     updatePromptCount();
     syncStyleHints();
     markActivePreset();
-    savedSnapshot = JSON.stringify(settings);
+    savedSnapshot = snapshotState();
   }
 
   function clearResult() {
@@ -271,12 +314,14 @@
 
   async function onTest() {
     if (testing) return;
+    syncKeyHostWithBase();
     const config = readForm();
     const validation = validateConfig(config, true);
     if (validation) {
       setResult(validation, 'err');
       return;
     }
+    captureCurrentKey();
 
     setTesting(true);
     clearResult();
@@ -322,20 +367,23 @@
 
   async function onSave() {
     if (testing) return;
+    syncKeyHostWithBase();
     const config = readForm();
     const validation = validateConfig(config, false);
     if (validation) {
       setSaveStatus(validation, 'err');
       return;
     }
+    captureCurrentKey();
+    const payload = Object.assign({}, config, { apiKeys: Object.assign({}, apiKeys) });
 
     let permission = { granted: true };
     if (config.apiBaseUrl && config.apiKey && config.model) {
       permission = await requestOriginPermission(config);
     }
     try {
-      await Settings.saveSettings(config);
-      savedSnapshot = JSON.stringify(config);
+      await Settings.saveSettings(payload);
+      savedSnapshot = snapshotState();
       if (permission.granted) {
         setSaveStatus('已保存，设置已自动生效。', 'ok');
       } else {
@@ -356,7 +404,9 @@
   }
 
   function isDirty() {
-    return JSON.stringify(readForm()) !== savedSnapshot;
+    if (!savedSnapshot) return false;
+    syncKeyHostWithBase();
+    return snapshotState() !== savedSnapshot;
   }
 
   async function init() {
@@ -366,10 +416,17 @@
     els.chunkChars.addEventListener('input', updateChunkOutput);
     els.customPrompt.addEventListener('input', updatePromptCount);
     els.apiBaseUrl.addEventListener('input', syncPresetFromFields);
+    els.apiBaseUrl.addEventListener('change', syncKeyHostWithBase);
     els.model.addEventListener('input', syncPresetFromFields);
     for (const input of [els.apiBaseUrl, els.apiKey, els.model]) {
       input.addEventListener('input', clearResult);
     }
+    els.apiKey.addEventListener('input', () => {
+      const host = Settings.hostnameFor(els.apiBaseUrl.value);
+      if (!host) return;
+      keyHost = host;
+      rememberKeyForHost(host, els.apiKey.value);
+    });
     els.revealKey.addEventListener('click', onRevealKey);
     els.testBtn.addEventListener('click', onTest);
     els.saveBtn.addEventListener('click', onSave);
