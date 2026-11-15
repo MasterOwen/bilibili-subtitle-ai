@@ -1108,7 +1108,7 @@
       setEmpty(empty, {
         icon: 'settings',
         title: '配置 AI 服务，或复制提示词',
-        desc: '配置 API Key 后可直接在扩展内生成；也可以不配置，复制完整提示词粘贴到 ChatGPT、Claude 等网页 AI 中手动生成。',
+        desc: '配置 API Key 后可直接在扩展内生成；也可以不配置，复制完整提示词粘贴到 ChatGPT、Claude、DeepSeek 等网页 AI 中手动生成。',
         actions: [
           { label: '去设置', act: 'settings', icon: 'settings', primary: true },
           { label: '复制提示词', act: 'copy-prompt', icon: 'copy' },
@@ -1121,16 +1121,20 @@
         icon: 'alert',
         title: '需要授权 API 域名',
         desc: `扩展尚未获得访问 ${state.aiStatus.baseHost || 'AI 服务'} 的权限，请在设置页保存一次以授权。`,
-        actions: [{ label: '去设置', act: 'settings', icon: 'settings', primary: true }],
+        actions: [
+          { label: '去设置', act: 'settings', icon: 'settings', primary: true },
+          { label: '复制提示词', act: 'copy-prompt', icon: 'copy' },
+        ],
       });
       return;
     }
     setEmpty(empty, {
       icon: 'sparkles',
       title: '生成一份视频总结',
-      desc: `将使用 ${state.aiStatus.model || 'AI'} 分析 ${state.segments.length} 条字幕，生成可导出的 Markdown 总结。`,
+      desc: `将使用 ${state.aiStatus.model || 'AI'} 分析 ${state.segments.length} 条字幕，生成可导出的 Markdown 总结；也可以复制提示词到其他网页 AI。`,
       actions: [
         { label: '开始生成', act: 'generate', icon: 'sparkles', primary: true },
+        { label: '复制提示词', act: 'copy-prompt', icon: 'copy' },
       ],
     });
   }
@@ -1385,10 +1389,10 @@
       }
       setStatus(
         state.refs.aiStatus,
-        '提示词已复制，可粘贴到 ChatGPT、Claude 等网页 AI 中并发送。',
+        '提示词已复制，可粘贴到 ChatGPT、Claude、DeepSeek 等网页 AI 中并发送。',
         'success',
       );
-      showToast('提示词已复制，请到 ChatGPT / Claude 等网页 AI 中粘贴并发送', 'success', 4200);
+      showToast('提示词已复制，请到 ChatGPT / Claude / DeepSeek 等网页 AI 中粘贴并发送', 'success', 4200);
     } catch (error) {
       showToast(error.message || '复制提示词失败', 'error', 4200);
     } finally {
