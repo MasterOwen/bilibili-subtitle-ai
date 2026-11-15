@@ -292,8 +292,9 @@
     }
 
     setResult('正在连接 AI 服务，请稍候…', 'warn');
+    let response = null;
     try {
-      const response = await sendRuntimeMessage(
+      response = await sendRuntimeMessage(
         { type: 'TEST_AI', config },
         60000,
       );
@@ -301,7 +302,19 @@
       const model = (response.result && response.result.model) || config.model;
       setResult(`连接成功 · ${model}`, 'ok');
     } catch (error) {
-      setResult(error.message || '连接失败', 'err');
+      let message = error.message || '连接失败';
+      // A stale MV3 service worker keeps running the previous ai.js after the
+      // files are replaced unless the extension itself is reloaded.
+      if (/x-opencode-session|MissingSessionID/i.test(message)) {
+        const version =
+          response && response.version ? `v${response.version}` : '未知（后台未上报，可能是旧版本）';
+        const feature =
+          response && response.features && response.features.openCodeSession
+            ? '已加载会话头支持'
+            : '未加载会话头支持';
+        message += `（后台 ${version}，${feature}；请到 chrome://extensions 点击扩展的“重新加载”，再关闭重开本页后重试）`;
+      }
+      setResult(message, 'err');
     } finally {
       setTesting(false);
     }
@@ -373,6 +386,20 @@
       event.preventDefault();
       event.returnValue = '';
     });
+
+    // The options page can be reloaded from disk while Chrome still runs the
+    // previous MV3 service worker. Warn before the user hits a confusing 400.
+    try {
+      const ping = await sendRuntimeMessage({ type: 'PING' }, 5000);
+      if (ping && ping.ok && ping.version && !(ping.features && ping.features.openCodeSession)) {
+        setSaveStatus(
+          `扩展后台仍是旧版本 v${ping.version}，请到 chrome://extensions 点击“重新加载”后再测试。`,
+          'warn',
+        );
+      }
+    } catch (_) {
+      /* Background may be starting; the test button reports failures. */
+    }
 
     try {
       const settings = await Settings.loadSettings();

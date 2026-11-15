@@ -27,6 +27,12 @@ function errorResponse(error) {
     ok: false,
     error: message,
     code: error && error.code ? error.code : '',
+    // Sent so the options page can tell whether the running background is the
+    // updated build or a stale service worker after an extension update.
+    version: chrome.runtime.getManifest().version,
+    features: {
+      openCodeSession: Boolean(AI && AI.FEATURES && AI.FEATURES.openCodeSession),
+    },
   };
 }
 
@@ -567,7 +573,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.type === 'PING') {
-    sendResponse({ ok: true, version: chrome.runtime.getManifest().version });
+    sendResponse({
+      ok: true,
+      version: chrome.runtime.getManifest().version,
+      features: {
+        openCodeSession: Boolean(AI && AI.FEATURES && AI.FEATURES.openCodeSession),
+      },
+    });
     return false;
   }
   return false;

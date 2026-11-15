@@ -89,6 +89,13 @@ Go 端点要求每个请求携带稳定的 `x-opencode-session` 会话标识。�
 - DeepSeek V4.1 Flash 默认只允许 **Europe & US** 区域；如果遇到区域或权限错误，请在 Console 的 **Settings › Privacy › Regions** 中选择 **Global**。
 - Go 的流量策略面向 coding agent，批量字幕总结可能被纳入滥用监控；请自行确认使用方式符合其条款。
 
+如果更新扩展后仍提示缺少 `x-opencode-session`：
+
+1. 打开 `chrome://extensions`，确认扩展版本正确，并点击扩展卡片上的 **重新加载**。
+2. 关闭并重新打开设置页——已经运行的 Service Worker 不会因为文件被替换而自动换用新代码。
+3. 测试失败信息末尾会显示后台版本和会话头能力；如果显示“未加载”或“未知”，说明仍在运行旧代码。
+4. 确认 Base URL 的域名是 `opencode.ai`；扩展只对这个域名附加会话头。
+
 ### 2. 授权 API 域名
 
 保存设置时，浏览器会弹出域名访问权限请求。例如配置 DeepSeek 时会请求访问 `api.deepseek.com`。**必须允许**，扩展的后台才能向该 API 发起请求。

@@ -604,6 +604,7 @@ ${notes}${customRequirement(config)}`,
   }
 
   root.BiliAI = {
+    FEATURES: Object.freeze({ openCodeSession: true }),
     summarizeVideo,
     testConnection,
     callChat,
