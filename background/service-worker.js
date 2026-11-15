@@ -508,6 +508,10 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onMessage.addListener((message) => {
     if (!message || typeof message !== 'object') return;
+    if (message.type === 'ping') {
+      safePost(port, { type: 'pong' });
+      return;
+    }
     if (message.type === 'abort') {
       controller.abort();
       return;

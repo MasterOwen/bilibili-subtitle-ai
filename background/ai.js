@@ -173,15 +173,18 @@ ${chunk.text}${customRequirement(config)}`,
 
   function finalMessages(video, notes, config) {
     const structure = FINAL_STRUCTURES[(config && config.style) || 'structured'] || FINAL_STRUCTURES.structured;
+    const partCount = (String(notes || '').match(/### 第 \d+ 段/g) || []).length;
+    const scope = partCount ? `全部 ${partCount} 个部分` : '各部分的';
     return [
       { role: 'system', content: systemPrompt(config) },
       {
         role: 'user',
         content: `${videoHeader(video)}
 
-下面是同一视频各部分的字幕笔记。请把它们整合成一份完整、忠实、可读的视频总结。
+下面是同一视频${scope}的字幕笔记。请把它们整合成一份完整、忠实、可读的视频总结。
 
 必须遵守：
+- 必须综合下面全部笔记，不能只总结第一段、最后一段或其中某一段。
 - 只依据笔记中的信息，不补充外部知识，不编造时间点或数据。
 - 不要重复堆砌同一件事；相似内容要合并。
 - 输出 Markdown 正文，从二级标题开始，不要写一级标题，不要用代码块包裹整篇答案。
@@ -414,11 +417,17 @@ ${notes}${customRequirement(config)}`,
         if (payload && payload.error) {
           throw new Error(`AI 服务返回错误：${providerMessage(text) || '未知错误'}`);
         }
+        const choice = payload && Array.isArray(payload.choices) ? payload.choices[0] : null;
         const usage = normalizeUsage(payload && payload.usage);
         totalUsage.promptTokens += usage.promptTokens;
         totalUsage.completionTokens += usage.completionTokens;
         totalUsage.totalTokens += usage.totalTokens || usage.promptTokens + usage.completionTokens;
-        return { content: extractContent(payload), usage: totalUsage, raw: payload };
+        return {
+          content: extractContent(payload),
+          usage: totalUsage,
+          raw: payload,
+          finishReason: choice && choice.finish_reason ? String(choice.finish_reason) : '',
+        };
       } catch (error) {
         const aborted = error && error.name === 'AbortError';
         if (aborted) {
@@ -451,6 +460,29 @@ ${notes}${customRequirement(config)}`,
       }
     }
     throw lastError || new Error('AI 请求失败');
+  }
+
+  /**
+   * Reasoning models can spend most of a small max_tokens budget before
+   * emitting visible text, which used to produce empty or half-sentence notes.
+   * Retry a truncated/empty answer with a larger output budget instead of
+   * silently accepting only some subtitle chunks.
+   */
+  async function callChatWithBudgets(options, budgets) {
+    const limits = Array.isArray(budgets) && budgets.length ? budgets : [3000];
+    let last = null;
+    for (const maxTokens of limits) {
+      const response = await callChat(Object.assign({}, options, { maxTokens }));
+      last = response;
+      if (response.finishReason === 'content_filter') {
+        throw new Error('AI 因内容安全策略截断了输出，请重试或换用其他模型');
+      }
+      if (response.content && response.finishReason !== 'length') return response;
+    }
+    if (last && last.content) {
+      throw new Error('AI 输出达到长度上限，分段笔记可能不完整；请减小分段长度后重试');
+    }
+    throw new Error('AI 没有返回有效内容，请重试或换用其他模型');
   }
 
   function report(onProgress, payload) {
@@ -493,15 +525,17 @@ ${notes}${customRequirement(config)}`,
         total: 1,
         message: '正在通读字幕并生成总结…',
       });
-      const response = await callChat({
-        config,
-        messages: directMessages(video, chunks[0].text, config),
-        sessionId,
-        maxTokens: 4200,
-        timeoutMs: 240000,
-        retries: 2,
-        signal,
-      });
+      const response = await callChatWithBudgets(
+        {
+          config,
+          messages: directMessages(video, chunks[0].text, config),
+          sessionId,
+          timeoutMs: 240000,
+          retries: 2,
+          signal,
+        },
+        [4000, 6000, 8000],
+      );
       calls += 1;
       addUsage(response.usage);
       summary = response.content;
@@ -515,26 +549,34 @@ ${notes}${customRequirement(config)}`,
           total: chunks.length,
           message: `正在提炼第 ${index + 1}/${chunks.length} 段字幕…`,
         });
-        const response = await callChat({
-          config,
-          messages: chunkMessages(video, chunks[index], index, chunks.length, config),
-          sessionId,
-          maxTokens: 1500,
-          timeoutMs: 180000,
-          retries: 2,
-          signal,
-        });
+        let response;
+        try {
+          response = await callChatWithBudgets(
+            {
+              config,
+              messages: chunkMessages(video, chunks[index], index, chunks.length, config),
+              sessionId,
+              timeoutMs: 180000,
+              retries: 2,
+              signal,
+            },
+            [3000, 5000, 7000],
+          );
+        } catch (error) {
+          throw new Error(`第 ${index + 1}/${chunks.length} 段字幕提炼失败：${error.message}`);
+        }
         calls += 1;
         addUsage(response.usage);
-        if (response.content) {
-          notes.push(
-            `### 第 ${index + 1} 段（${U.formatClock(chunks[index].from)}–${U.formatClock(
-              chunks[index].to,
-            )}）\n${response.content}`,
-          );
-        }
+        notes.push(
+          `### 第 ${index + 1} 段（${U.formatClock(chunks[index].from)}–${U.formatClock(
+            chunks[index].to,
+          )}）\n${response.content}`,
+        );
       }
       if (!notes.length) throw new Error('AI 没有返回有效的分段笔记，请重试');
+      if (notes.length !== chunks.length) {
+        throw new Error('分段笔记数量与字幕分段不一致，请重试');
+      }
 
       let round = 0;
       while (notes.join('\n\n').length > 24000 && notes.length > 1) {
@@ -546,22 +588,31 @@ ${notes}${customRequirement(config)}`,
           message: `正在合并第 ${round} 轮分段笔记…`,
         });
         const merged = [];
-        for (let index = 0; index < notes.length; index += 4) {
-          const group = notes.slice(index, index + 4).join('\n\n');
-          const response = await callChat({
-            config,
-            messages: mergeMessages(video, group, config),
-            sessionId,
-            maxTokens: 1800,
-            timeoutMs: 180000,
-            retries: 2,
-            signal,
-          });
+        for (let index = 0; index < notes.length; index += 2) {
+          const group = notes.slice(index, index + 2).join('\n\n');
+          let response;
+          try {
+            response = await callChatWithBudgets(
+              {
+                config,
+                messages: mergeMessages(video, group, config),
+                sessionId,
+                timeoutMs: 180000,
+                retries: 2,
+                signal,
+              },
+              [3000, 5000, 7000],
+            );
+          } catch (error) {
+            throw new Error(`合并第 ${Math.floor(index / 2) + 1} 组分段笔记失败：${error.message}`);
+          }
           calls += 1;
           addUsage(response.usage);
-          if (response.content) merged.push(response.content);
+          merged.push(response.content);
         }
-        if (!merged.length) throw new Error('AI 合并分段笔记失败，请重试');
+        if (!merged.length || merged.length !== Math.ceil(notes.length / 2)) {
+          throw new Error('AI 合并分段笔记失败，请重试');
+        }
         notes.splice(0, notes.length, ...merged);
       }
 
@@ -572,15 +623,17 @@ ${notes}${customRequirement(config)}`,
         total: 1,
         message: '正在整合全篇，生成最终总结…',
       });
-      const response = await callChat({
-        config,
-        messages: finalMessages(video, notes.join('\n\n'), config),
-        sessionId,
-        maxTokens: 4200,
-        timeoutMs: 240000,
-        retries: 2,
-        signal,
-      });
+      const response = await callChatWithBudgets(
+        {
+          config,
+          messages: finalMessages(video, notes.join('\n\n'), config),
+          sessionId,
+          timeoutMs: 240000,
+          retries: 2,
+          signal,
+        },
+        [5000, 7000, 8000],
+      );
       calls += 1;
       addUsage(response.usage);
       summary = response.content;

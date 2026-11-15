@@ -196,6 +196,7 @@
     promptCopying: false,
     summaryToken: 0,
     summaryPort: null,
+    summaryHeartbeat: null,
     summaryWatchdog: null,
     warnings: [],
     aiStatus: null,
@@ -1153,6 +1154,7 @@
       const port = state.summaryPort;
       state.summaryLoading = false;
       state.summaryToken += 1;
+      stopSummaryHeartbeat();
       try {
         if (port) {
           port.postMessage({ type: 'abort' });
@@ -1170,7 +1172,25 @@
     }, 300000);
   }
 
+  function startSummaryHeartbeat(port) {
+    stopSummaryHeartbeat();
+    state.summaryHeartbeat = setInterval(() => {
+      try {
+        port.postMessage({ type: 'ping' });
+      } catch (_) {
+        stopSummaryHeartbeat();
+      }
+    }, 15000);
+  }
+
+  function stopSummaryHeartbeat() {
+    if (!state.summaryHeartbeat) return;
+    clearInterval(state.summaryHeartbeat);
+    state.summaryHeartbeat = null;
+  }
+
   function cleanupSummaryPort() {
+    stopSummaryHeartbeat();
     clearTimeout(state.summaryWatchdog);
     state.summaryWatchdog = null;
     if (state.summaryPort) {
@@ -1256,10 +1276,15 @@
       return;
     }
     state.summaryPort = port;
+    startSummaryHeartbeat(port);
 
     port.onMessage.addListener((message) => {
       if (token !== state.summaryToken) return;
       if (!message || typeof message !== 'object') return;
+      if (message.type === 'pong') {
+        armSummaryWatchdog();
+        return;
+      }
       if (message.type === 'progress') {
         armSummaryWatchdog();
         const progress = message.progress || {};
@@ -1332,8 +1357,10 @@
       const runtimeError = chrome.runtime.lastError;
       state.summaryLoading = false;
       state.summaryToken += 1;
+      stopSummaryHeartbeat();
       state.aiError =
-        (runtimeError && runtimeError.message) || '与后台的连接意外中断，请重试。';
+        (runtimeError && runtimeError.message) ||
+        '与后台的连接意外中断，请重试；长视频可在设置中减小分段长度后重试。';
       if (state.refs.progress) state.refs.progress.hidden = true;
       setStatus(state.refs.aiStatus, state.aiError, 'error');
       state.summaryPort = null;
@@ -1550,6 +1577,7 @@
   function abortSummary(silent) {
     state.summaryToken += 1;
     state.summaryLoading = false;
+    stopSummaryHeartbeat();
     clearTimeout(state.summaryWatchdog);
     if (state.summaryPort) {
       try {

@@ -174,6 +174,117 @@ test('summarizeVideo maps and reduces long transcripts', async () => {
   assert.ok(progress.some((event) => event.phase === 'final'));
 });
 
+test('summarizeVideo retries truncated map notes and keeps every chunk', async () => {
+  const segments = [];
+  for (let i = 0; i < 120; i += 1) {
+    segments.push({
+      from: i * 2,
+      to: i * 2 + 1,
+      content: '这是一个用于测试分段总结的字幕句子，包含足够的长度来触发分段。',
+    });
+  }
+  let mapAttempts = 0;
+  let retriedFirstChunk = false;
+  let finalPrompt = '';
+  const budgets = [];
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const user = body.messages[1].content;
+    if (user.includes('信息笔记')) {
+      mapAttempts += 1;
+      const part = Number((user.match(/第 (\d+)\/\d+ 部分/) || [])[1]);
+      budgets.push({ part, maxTokens: body.max_tokens });
+      if (part === 1 && !retriedFirstChunk) {
+        retriedFirstChunk = true;
+        assert.equal(body.max_tokens, 3000);
+        return jsonResponse({
+          choices: [
+            {
+              message: { content: '- [00:00] 第一段笔记被截断' },
+              finish_reason: 'length',
+            },
+          ],
+        });
+      }
+      return jsonResponse({
+        choices: [
+          {
+            message: { content: `- [00:01] 第${part}段完整笔记` },
+            finish_reason: 'stop',
+          },
+        ],
+      });
+    }
+    if (user.includes('分段笔记')) {
+      finalPrompt = user;
+      return jsonResponse({
+        choices: [
+          {
+            message: { content: '## 一句话概括\n完整总结' },
+            finish_reason: 'stop',
+          },
+        ],
+      });
+    }
+    throw new Error(`unexpected prompt: ${user.slice(0, 60)}`);
+  };
+
+  const result = await AI.summarizeVideo({
+    video: { title: '长视频', duration: 240, owner: 'UP' },
+    segments,
+    config: config({ chunkChars: 3000 }),
+  });
+  assert.equal(result.stats.chunks, 2);
+  assert.equal(mapAttempts, 3);
+  assert.deepEqual(budgets, [
+    { part: 1, maxTokens: 3000 },
+    { part: 1, maxTokens: 5000 },
+    { part: 2, maxTokens: 3000 },
+  ]);
+  assert.match(finalPrompt, /第1段完整笔记/);
+  assert.match(finalPrompt, /第2段完整笔记/);
+  assert.doesNotMatch(finalPrompt, /被截断/);
+});
+
+test('summarizeVideo fails instead of silently dropping an empty chunk note', async () => {
+  const segments = [];
+  for (let i = 0; i < 120; i += 1) {
+    segments.push({
+      from: i * 2,
+      to: i * 2 + 1,
+      content: '这是一个用于测试空分段笔记的字幕句子，包含足够的长度来触发分段。',
+    });
+  }
+  let mapCalls = 0;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const user = body.messages[1].content;
+    if (user.includes('信息笔记')) {
+      mapCalls += 1;
+      return jsonResponse({
+        choices: [
+          {
+            message: { content: '' },
+            finish_reason: 'stop',
+          },
+        ],
+      });
+    }
+    throw new Error('final summary should not run without map notes');
+  };
+
+  await assert.rejects(
+    () =>
+      AI.summarizeVideo({
+        video: { title: '长视频', duration: 240, owner: 'UP' },
+        segments,
+        config: config({ chunkChars: 3000 }),
+      }),
+    /第 1\/2 段字幕提炼失败.*没有返回有效内容/,
+  );
+  assert.equal(mapCalls, 3);
+});
+
 test('OpenCode Go requests share one stable session header', async () => {
   const seen = [];
   globalThis.fetch = async (url, init) => {
