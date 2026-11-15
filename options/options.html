@@ -54,13 +54,14 @@
               <span class="field-label">API Key</span>
               <span class="password-wrap">
                 <input id="apiKey" type="password" spellcheck="false" autocomplete="new-password" placeholder="sk-..." />
+                <button class="clear-key" id="clearKey" type="button" title="清除已保存的 API Key（保存后生效）" hidden>清除</button>
                 <button class="reveal" id="revealKey" type="button" aria-label="显示 API Key" title="显示 / 隐藏">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" /><circle cx="12" cy="12" r="2.6" />
                   </svg>
                 </button>
               </span>
-              <span class="field-hint">仅保存在本机，按 API 域名分别保存，切换服务商时自动恢复；不会发送到该 API 之外的地方。</span>
+              <span class="field-hint">已保存的 Key 不会回显；留空保持不变，输入即替换。按 API 域名分别保存，不会发送到该 API 之外的地方。</span>
             </label>
           </div>
 
@@ -175,7 +176,7 @@
           <p>获取失败时，可以刷新 B站页面后重试；B站接口偶尔会触发风控。</p>
         </section>
 
-        <div class="version">v<span id="version">1.0.2</span> · 本地运行，无远程代码</div>
+        <div class="version">v<span id="version">1.0.3</span> · 本地运行，无远程代码</div>
       </aside>
     </main>
 

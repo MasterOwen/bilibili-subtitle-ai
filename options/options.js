@@ -29,6 +29,7 @@
     txtTimestamps: document.getElementById('txtTimestamps'),
     includeHeader: document.getElementById('includeHeader'),
     revealKey: document.getElementById('revealKey'),
+    clearKey: document.getElementById('clearKey'),
     testBtn: document.getElementById('testBtn'),
     testLabel: document.getElementById('testLabel'),
     testResult: document.getElementById('testResult'),
@@ -41,6 +42,8 @@
   let testing = false;
   let savedSnapshot = '';
   let apiKeys = {};
+  let savedKeys = {};
+  let clearedHosts = new Set();
   let keyHost = '';
 
   function getPresetHost(key) {
@@ -50,30 +53,79 @@
   function rememberKeyForHost(host, value) {
     if (!host || host === '__proto__' || host === 'prototype') return;
     const trimmed = String(value == null ? '' : value).trim();
-    if (trimmed) apiKeys[host] = trimmed;
-    else delete apiKeys[host];
+    if (trimmed) {
+      apiKeys[host] = trimmed;
+      clearedHosts.delete(host);
+    } else if (clearedHosts.has(host)) {
+      delete apiKeys[host];
+    } else if (savedKeys[host]) {
+      apiKeys[host] = savedKeys[host];
+    } else {
+      delete apiKeys[host];
+    }
   }
 
   function captureCurrentKey() {
     const host = keyHost || Settings.hostnameFor(els.apiBaseUrl.value);
-    rememberKeyForHost(host, els.apiKey.value);
+    const value = els.apiKey.value.trim();
+    if (!host || !value) return;
+    rememberKeyForHost(host, value);
   }
 
-  function restoreKeyForCurrentHost() {
+  function effectiveKey() {
+    const typed = els.apiKey.value.trim();
+    if (typed) return typed;
+    const host = Settings.hostnameFor(els.apiBaseUrl.value);
+    if (!host || clearedHosts.has(host)) return '';
+    return Settings.apiKeyForHost(apiKeys, els.apiBaseUrl.value);
+  }
+
+  function hideKeyField() {
+    els.apiKey.type = 'password';
+    els.revealKey.setAttribute('aria-label', '显示 API Key');
+  }
+
+  function updateKeyUi() {
+    const host = Settings.hostnameFor(els.apiBaseUrl.value);
+    const saved = Boolean(host && savedKeys[host]);
+    const working = Boolean(host && Settings.apiKeyForHost(apiKeys, els.apiBaseUrl.value));
+    const cleared = Boolean(host && clearedHosts.has(host));
+    const draft = working && (!saved || apiKeys[host] !== savedKeys[host]);
+    const typing = Boolean(els.apiKey.value.trim());
+    if (typing) {
+      els.apiKey.placeholder = saved ? '输入新 Key 以替换' : 'sk-...';
+    } else if (cleared) {
+      els.apiKey.placeholder = '已清除，保存后生效';
+    } else if (draft) {
+      els.apiKey.placeholder = '已有未保存的 Key';
+    } else if (saved) {
+      els.apiKey.placeholder = '已保存 · 留空保持不变';
+    } else {
+      els.apiKey.placeholder = 'sk-...';
+    }
+    els.clearKey.hidden = !(saved || working) || cleared;
+    els.revealKey.disabled = !els.apiKey.value;
+  }
+
+  function resetKeyField() {
     keyHost = Settings.hostnameFor(els.apiBaseUrl.value);
-    els.apiKey.value = Settings.apiKeyForHost(apiKeys, els.apiBaseUrl.value);
+    els.apiKey.value = '';
+    hideKeyField();
+    updateKeyUi();
   }
 
   /**
-   * If the user edited the Base URL without blurring it yet, move the key to
-   * the host it belongs to and load the key saved for the new host.
+   * If the user edited the Base URL without blurring it yet, move the draft to
+   * the host it belongs to and leave the field empty for the new host.
    */
   function syncKeyHostWithBase() {
     const host = Settings.hostnameFor(els.apiBaseUrl.value);
     if (!host || host === keyHost) return;
-    rememberKeyForHost(keyHost, els.apiKey.value);
+    captureCurrentKey();
     keyHost = host;
-    els.apiKey.value = Settings.apiKeyForHost(apiKeys, els.apiBaseUrl.value);
+    els.apiKey.value = '';
+    hideKeyField();
+    updateKeyUi();
   }
 
   function snapshotState() {
@@ -124,7 +176,7 @@
     }
     els.apiBaseUrl.value = preset.apiBaseUrl;
     els.model.value = preset.model;
-    restoreKeyForCurrentHost();
+    resetKeyField();
     clearResult();
   }
 
@@ -182,7 +234,7 @@
   function readForm() {
     return Settings.normalizeSettings({
       apiBaseUrl: els.apiBaseUrl.value,
-      apiKey: els.apiKey.value,
+      apiKey: effectiveKey(),
       model: els.model.value,
       language: els.language.value,
       style: els.style.value,
@@ -195,7 +247,7 @@
 
   function fillForm(settings) {
     els.apiBaseUrl.value = settings.apiBaseUrl;
-    els.apiKey.value = settings.apiKey;
+    els.apiKey.value = '';
     els.model.value = settings.model;
     els.language.value = settings.language;
     els.style.value = settings.style;
@@ -207,6 +259,10 @@
     apiKeys = Object.assign({}, settings.apiKeys || {});
     keyHost = Settings.hostnameFor(settings.apiBaseUrl);
     if (keyHost && settings.apiKey) apiKeys[keyHost] = settings.apiKey;
+    savedKeys = Object.assign({}, apiKeys);
+    clearedHosts = new Set();
+    hideKeyField();
+    updateKeyUi();
     updateChunkOutput();
     updatePromptCount();
     syncStyleHints();
@@ -383,6 +439,12 @@
     }
     try {
       await Settings.saveSettings(payload);
+      savedKeys = Object.assign({}, apiKeys);
+      clearedHosts = new Set();
+      els.apiKey.value = '';
+      keyHost = Settings.hostnameFor(config.apiBaseUrl);
+      hideKeyField();
+      updateKeyUi();
       savedSnapshot = snapshotState();
       if (permission.granted) {
         setSaveStatus('已保存，设置已自动生效。', 'ok');
@@ -397,7 +459,24 @@
     }
   }
 
+  function onClearKey() {
+    const host = Settings.hostnameFor(els.apiBaseUrl.value);
+    if (!host) return;
+    const hadSaved = Boolean(savedKeys[host]);
+    captureCurrentKey();
+    delete apiKeys[host];
+    if (hadSaved) clearedHosts.add(host);
+    else clearedHosts.delete(host);
+    els.apiKey.value = '';
+    keyHost = host;
+    hideKeyField();
+    updateKeyUi();
+    clearResult();
+    setSaveStatus('已清除该域名的 API Key，保存后生效。', 'warn');
+  }
+
   function onRevealKey() {
+    if (!els.apiKey.value) return;
     const isPassword = els.apiKey.type === 'password';
     els.apiKey.type = isPassword ? 'text' : 'password';
     els.revealKey.setAttribute('aria-label', isPassword ? '隐藏 API Key' : '显示 API Key');
@@ -426,8 +505,10 @@
       if (!host) return;
       keyHost = host;
       rememberKeyForHost(host, els.apiKey.value);
+      updateKeyUi();
     });
     els.revealKey.addEventListener('click', onRevealKey);
+    els.clearKey.addEventListener('click', onClearKey);
     els.testBtn.addEventListener('click', onTest);
     els.saveBtn.addEventListener('click', onSave);
 

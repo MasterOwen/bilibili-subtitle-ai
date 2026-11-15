@@ -68,7 +68,7 @@
 | 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
 | 自定义 | 手动填写 | 手动填写 |
 
-选择服务商后填写 **API Key**，按需修改模型名。每个服务商的 API Key 按 API 域名分别保存，切换预设时会自动恢复该服务商上次填写的 Key。支持：
+选择服务商后填写 **API Key**，按需修改模型名。每个服务商的 API Key 按 API 域名分别保存，切换预设时会自动使用该服务商已保存的 Key（输入框不会回显）。留空保存会保留原 Key，输入新 Key 会替换，点击输入框旁的「清除」并保存可删除该域名的 Key。支持：
 - 填写到版本号的 Base URL，例如 `https://api.openai.com/v1`，扩展会自动拼接 `/chat/completions`。
 - 直接粘贴完整的 `.../chat/completions` 地址。
 - 本地模型服务，例如 Ollama / LM Studio 的 OpenAI 兼容地址。

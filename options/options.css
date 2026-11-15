@@ -414,7 +414,30 @@ textarea:focus {
 }
 
 .password-wrap input {
-  padding-right: 40px;
+  padding-right: 86px;
+}
+
+.clear-key {
+  position: absolute;
+  right: 36px;
+  top: 50%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  font-size: 10.5px;
+  line-height: 1.2;
+  transform: translateY(-50%);
+}
+
+.clear-key:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.clear-key[hidden] {
+  display: none;
 }
 
 .reveal {
@@ -431,6 +454,16 @@ textarea:focus {
   background: transparent;
   color: #7c8395;
   transform: translateY(-50%);
+}
+
+.reveal:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.reveal:disabled:hover {
+  background: transparent;
+  color: #7c8395;
 }
 
 .reveal svg {
