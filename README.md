@@ -153,13 +153,15 @@ bilibili-subtitle-ai/
 ├─ options/                  # 设置页
 ├─ popup/                    # 扩展图标弹窗
 ├─ icons/                    # 图标
+├─ scripts/
+│  └─ build.js               # 生成 dist/ 发布包
 ├─ preview/                  # 截图
 └─ tests/                    # 单元测试、浏览器冒烟测试
 ```
 
 ## 本地开发
 
-无需构建，直接加载项目根目录即可。
+运行时无需构建，直接加载项目根目录即可调试；发布前用 `npm run build` 生成 `dist/`。
 
 ```bash
 # 语法检查
@@ -167,6 +169,20 @@ npm run check
 
 # 单元测试（Node 22+）
 npm test
+
+# 生成发布包
+npm run build
+```
+
+`npm run build` 会先校验 manifest 引用的文件，再把运行时文件复制到
+`dist/bilibili-subtitle-ai-v<version>/`，并生成同名的 ZIP。ZIP 条目位于压缩包根目录，
+解压后可直接加载。`dist/` 属于生成产物，已加入 `.gitignore`。
+
+设置 `SOURCE_DATE_EPOCH`（秒）可以固定 ZIP 内的时间戳，从而得到字节级可复现的发布包：
+
+```powershell
+$env:SOURCE_DATE_EPOCH="1763200000"
+npm run build
 ```
 
 浏览器 UI 冒烟测试使用 Playwright Core + Chromium，会启动一个本地 Chromium，并用 mock service worker 驱动真实面板：
