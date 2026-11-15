@@ -31,7 +31,7 @@ test('normalizes and clamps settings', () => {
   assert.equal(settings.model, 'model-x');
   assert.equal(settings.language, 'zh');
   assert.equal(settings.style, 'structured');
-  assert.equal(settings.chunkChars, 12000);
+  assert.equal(settings.chunkChars, 30000);
   assert.equal(settings.customPrompt.length, 1500);
   assert.equal(settings.txtTimestamps, true);
   assert.equal(settings.includeHeader, false);

@@ -606,7 +606,7 @@ ${notes}${customRequirement(config)}`,
    * Retry a truncated/empty answer with a larger output budget instead of
    * silently accepting only some subtitle chunks.
    */
-  const MAX_OUTPUT_TOKENS = 30000;
+  const MAX_OUTPUT_TOKENS = 100000;
 
   function budgetsForChars(chars, minimum) {
     const base = Math.max(

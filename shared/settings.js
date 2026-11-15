@@ -116,7 +116,7 @@
       model: String(pick('model') || '').trim(),
       language: LANGUAGES.some((item) => item.value === languageValue) ? languageValue : DEFAULTS.language,
       style: STYLES.some((item) => item.value === styleValue) ? styleValue : DEFAULTS.style,
-      chunkChars: Number.isFinite(chunk) ? Math.min(12000, Math.max(3000, Math.round(chunk / 500) * 500)) : DEFAULTS.chunkChars,
+      chunkChars: Number.isFinite(chunk) ? Math.min(30000, Math.max(3000, Math.round(chunk / 500) * 500)) : DEFAULTS.chunkChars,
       customPrompt: String(pick('customPrompt') || '').trim().slice(0, 1500),
       txtTimestamps: Boolean(pick('txtTimestamps')),
       includeHeader: Boolean(pick('includeHeader')),

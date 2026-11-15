@@ -108,8 +108,8 @@
 
           <label class="field field-range">
             <span class="field-label">分段长度 <output id="chunkOutput">7000 字</output></span>
-            <input id="chunkChars" type="range" min="3000" max="12000" step="500" value="7000" />
-            <span class="field-hint">每段字幕的字数上限。视频很长时可适当调大，减少请求次数；模型上下文较小时可调小。</span>
+            <input id="chunkChars" type="range" min="3000" max="30000" step="500" value="7000" />
+            <span class="field-hint">每段字幕的字数上限，最高 30000 字。视频很长时可适当调大，减少请求次数；模型上下文较小时可调小。</span>
           </label>
 
           <label class="field">
