@@ -74,6 +74,40 @@
     if (signal && signal.aborted) throw abortError();
   }
 
+  /**
+   * OpenCode Go requires a stable x-opencode-session header so Console can
+   * route one conversation consistently and reuse its prompt cache.
+   */
+  function createSessionId() {
+    try {
+      if (root.crypto && typeof root.crypto.randomUUID === 'function') {
+        return `ses_${root.crypto.randomUUID().replace(/-/g, '')}`;
+      }
+    } catch (_) {
+      /* fall through to the timestamp-based id */
+    }
+    return `ses_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  function isOpenCodeEndpoint(url) {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      return host === 'opencode.ai' || host.endsWith('.opencode.ai');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function requestHeaders(config, sessionId) {
+    const headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${config.apiKey}`,
+    };
+    if (sessionId) headers['x-opencode-session'] = sessionId;
+    return headers;
+  }
+
   function languageInstruction(language) {
     if (language === 'en') {
       return 'Write the entire answer in natural English. Keep timestamps and proper nouns unchanged.';
@@ -305,6 +339,8 @@ ${notes}${customRequirement(config)}`,
     if (!config.model) throw new Error('尚未配置模型名称');
 
     const url = root.BiliSubSettings.buildChatCompletionsUrl(config.apiBaseUrl);
+    const openCode = isOpenCodeEndpoint(url);
+    const sessionId = openCode ? opts.sessionId || createSessionId() : '';
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     let lastError = null;
     const requestDefaults = {
@@ -324,11 +360,7 @@ ${notes}${customRequirement(config)}`,
           method: 'POST',
           credentials: 'omit',
           cache: 'no-store',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            Authorization: `Bearer ${config.apiKey}`,
-          },
+          headers: requestHeaders(config, sessionId),
           body: JSON.stringify(body),
           signal: linked.signal,
         });
@@ -423,6 +455,9 @@ ${notes}${customRequirement(config)}`,
     const chunks = U.chunkSegments(segments, config.chunkChars || 7000);
     if (!chunks.length) throw new Error('字幕内容为空，无法总结');
 
+    // One conversation = one stable session, shared by every map/reduce/final
+    // request so OpenCode Go can route and cache it consistently.
+    const sessionId = createSessionId();
     const startedAt = new Date();
     const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     let calls = 0;
@@ -443,6 +478,7 @@ ${notes}${customRequirement(config)}`,
       const response = await callChat({
         config,
         messages: directMessages(video, chunks[0].text, config),
+        sessionId,
         maxTokens: 4200,
         timeoutMs: 240000,
         retries: 2,
@@ -464,6 +500,7 @@ ${notes}${customRequirement(config)}`,
         const response = await callChat({
           config,
           messages: chunkMessages(video, chunks[index], index, chunks.length, config),
+          sessionId,
           maxTokens: 1500,
           timeoutMs: 180000,
           retries: 2,
@@ -496,6 +533,7 @@ ${notes}${customRequirement(config)}`,
           const response = await callChat({
             config,
             messages: mergeMessages(video, group, config),
+            sessionId,
             maxTokens: 1800,
             timeoutMs: 180000,
             retries: 2,
@@ -519,6 +557,7 @@ ${notes}${customRequirement(config)}`,
       const response = await callChat({
         config,
         messages: finalMessages(video, notes.join('\n\n'), config),
+        sessionId,
         maxTokens: 4200,
         timeoutMs: 240000,
         retries: 2,
@@ -550,6 +589,7 @@ ${notes}${customRequirement(config)}`,
         { role: 'system', content: '你是一个连接测试助手。' },
         { role: 'user', content: '这是连接测试，请只回复：OK' },
       ],
+      sessionId: createSessionId(),
       maxTokens: 32,
       timeoutMs: 45000,
       retries: 0,

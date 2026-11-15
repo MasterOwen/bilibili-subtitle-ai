@@ -4,9 +4,10 @@
   const Settings = globalThis.BiliSubSettings;
   if (!Settings) return;
 
-  const PRESET_ORDER = ['deepseek', 'openai', 'siliconflow', 'zhipu', 'custom'];
+  const PRESET_ORDER = ['deepseek', 'opencodeGo', 'openai', 'siliconflow', 'zhipu', 'custom'];
   const PRESET_SUBTITLE = {
     deepseek: 'api.deepseek.com',
+    opencodeGo: 'opencode.ai',
     openai: 'api.openai.com',
     siliconflow: 'api.siliconflow.cn',
     zhipu: 'open.bigmodel.cn',
@@ -54,6 +55,7 @@
       button.className = 'preset';
       button.dataset.preset = key;
       button.setAttribute('aria-pressed', key === activePreset ? 'true' : 'false');
+      if (preset.hint) button.title = preset.hint;
       const label = document.createElement('strong');
       label.textContent = preset.label;
       const sub = document.createElement('small');

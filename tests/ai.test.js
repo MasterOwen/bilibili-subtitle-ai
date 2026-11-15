@@ -55,6 +55,7 @@ test('callChat sends a Chat Completions request and extracts content', async () 
   assert.equal(captured.url, 'https://api.deepseek.com/v1/chat/completions');
   assert.equal(captured.init.method, 'POST');
   assert.equal(captured.init.headers.Authorization, 'Bearer sk-test');
+  assert.equal(captured.init.headers['x-opencode-session'], undefined);
   assert.equal(captured.body.model, 'deepseek-chat');
   assert.equal(captured.body.max_tokens, 100);
   assert.equal(captured.body.stream, false);
@@ -141,4 +142,62 @@ test('summarizeVideo maps and reduces long transcripts', async () => {
   assert.equal(result.stats.calls, mapCalls + finalCalls);
   assert.ok(progress.some((event) => event.phase === 'map'));
   assert.ok(progress.some((event) => event.phase === 'final'));
+});
+
+test('OpenCode Go requests share one stable session header', async () => {
+  const seen = [];
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url, session: init.headers['x-opencode-session'] });
+    const user = JSON.parse(init.body).messages[1].content;
+    if (user.includes('信息笔记')) {
+      return jsonResponse({ choices: [{ message: { content: '- [00:01] 分段要点' } }] });
+    }
+    if (user.includes('分段笔记')) {
+      return jsonResponse({ choices: [{ message: { content: '## 一句话概括\n合并后的总结。' } }] });
+    }
+    return jsonResponse({ choices: [{ message: { content: '## 一句话概括\n直接总结。' } }] });
+  };
+
+  const segments = [];
+  for (let i = 0; i < 120; i += 1) {
+    segments.push({
+      from: i * 4,
+      to: i * 4 + 3,
+      content: `第${i + 1}段字幕，包含一个观点、一个例子和一个结论，用来触发分段总结。`,
+    });
+  }
+
+  const result = await AI.summarizeVideo({
+    video: { title: 'OpenCode Go 测试', duration: 480 },
+    segments,
+    config: config({
+      apiBaseUrl: 'https://opencode.ai/inference/go/openai/v1',
+      model: 'deepseek-v4.1-flash',
+      chunkChars: 3000,
+    }),
+  });
+
+  assert.ok(seen.length >= 2, `expected multiple requests, got ${seen.length}`);
+  assert.ok(
+    seen.every((item) => item.url === 'https://opencode.ai/inference/go/openai/v1/chat/completions'),
+  );
+  assert.match(seen[0].session, /^ses_[0-9a-f]{32}$/);
+  assert.ok(seen.every((item) => item.session === seen[0].session), 'session id must stay stable');
+  assert.match(result.summary, /合并后的总结/);
+});
+
+test('testConnection sends an OpenCode Go session header', async () => {
+  let session;
+  globalThis.fetch = async (url, init) => {
+    session = init.headers['x-opencode-session'];
+    return jsonResponse({ choices: [{ message: { content: 'OK' } }] });
+  };
+  const result = await AI.testConnection(
+    config({
+      apiBaseUrl: 'https://opencode.ai/inference/go/openai/v1/chat/completions',
+      model: 'deepseek-v4.1-flash',
+    }),
+  );
+  assert.equal(result.ok, true);
+  assert.match(session, /^ses_[0-9a-f]{32}$/);
 });

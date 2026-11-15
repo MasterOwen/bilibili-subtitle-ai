@@ -33,6 +33,12 @@
       model: 'deepseek-chat',
       hint: '在 platform.deepseek.com 创建 API Key',
     },
+    opencodeGo: {
+      label: 'OpenCode Go',
+      apiBaseUrl: 'https://opencode.ai/inference/go/openai/v1',
+      model: 'deepseek-v4.1-flash',
+      hint: '需要 OpenCode Go 订阅；扩展会自动附加 x-opencode-session 会话头',
+    },
     openai: {
       label: 'OpenAI',
       apiBaseUrl: 'https://api.openai.com/v1',

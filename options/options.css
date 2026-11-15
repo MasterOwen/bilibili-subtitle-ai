@@ -232,7 +232,7 @@ button {
 
 .preset-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 7px;
   margin-bottom: 18px;
 }
@@ -240,6 +240,7 @@ button {
 .preset {
   position: relative;
   display: flex;
+  min-width: 0;
   min-height: 54px;
   flex-direction: column;
   align-items: flex-start;
@@ -259,15 +260,21 @@ button {
 }
 
 .preset strong {
+  max-width: 100%;
+  overflow: hidden;
   font-size: 11.5px;
   font-weight: 650;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .preset small {
+  max-width: 100%;
+  overflow: hidden;
   color: var(--faint);
   font-size: 9.5px;
   line-height: 1.4;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

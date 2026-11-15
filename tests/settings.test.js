@@ -44,6 +44,16 @@ test('builds Chat Completions URLs from common base URLs', () => {
     Settings.buildChatCompletionsUrl('https://example.com/v1/chat/completions/'),
     'https://example.com/v1/chat/completions',
   );
+  assert.equal(
+    Settings.buildChatCompletionsUrl('https://opencode.ai/inference/go/openai/v1'),
+    'https://opencode.ai/inference/go/openai/v1/chat/completions',
+  );
+  assert.equal(
+    Settings.buildChatCompletionsUrl(
+      'https://opencode.ai/inference/go/openai/v1/chat/completions',
+    ),
+    'https://opencode.ai/inference/go/openai/v1/chat/completions',
+  );
   assert.throws(() => Settings.buildChatCompletionsUrl('ftp://example.com'), /http/);
   assert.throws(() => Settings.buildChatCompletionsUrl('not a url'), /格式/);
 });
@@ -66,6 +76,20 @@ test('detects provider presets and configuration completeness', () => {
       model: 'deepseek-chat',
     }),
     'deepseek',
+  );
+  assert.equal(
+    Settings.presetForSettings({
+      apiBaseUrl: 'https://opencode.ai/inference/go/openai/v1',
+      model: 'deepseek-v4.1-flash',
+    }),
+    'opencodeGo',
+  );
+  assert.equal(
+    Settings.presetForSettings({
+      apiBaseUrl: 'https://opencode.ai/inference/go/openai/v1/chat/completions',
+      model: 'deepseek-v4.1-flash',
+    }),
+    'opencodeGo',
   );
   assert.equal(
     Settings.presetForSettings({ apiBaseUrl: 'https://my-gateway.example/v1', model: 'custom' }),

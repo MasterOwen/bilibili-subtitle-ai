@@ -9,7 +9,7 @@
 - **自动识别视频**：支持普通视频、多 P 视频和番剧播放页，SPA 切换视频后自动刷新。
 - **读取当前字幕**：从 Bilibili 播放器接口读取字幕轨，自动选择当前浏览器语言对应的字幕。
 - **字幕搜索与跳转**：按关键词筛选字幕；点击时间点跳转到视频对应位置。
-- **AI 视频总结**：支持 DeepSeek、OpenAI、硅基流动、智谱 GLM，以及任意 OpenAI Chat Completions 兼容接口。
+- **AI 视频总结**：支持 DeepSeek、OpenCode Go、OpenAI、硅基流动、智谱 GLM，以及任意 OpenAI Chat Completions 兼容接口。
 - **长视频分段总结**：字幕按字数分段提炼，再合并为全局总结，避免一次性输入导致中段信息丢失。
 - **四种总结风格**：结构化摘要、精简要点、详细笔记、学习提纲。
 - **导出**：
@@ -62,6 +62,7 @@
 | 预设 | 默认 Base URL | 默认模型 |
 | --- | --- | --- |
 | DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| OpenCode Go | `https://opencode.ai/inference/go/openai/v1` | `deepseek-v4.1-flash` |
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
 | 硅基流动 | `https://api.siliconflow.cn/v1` | `deepseek-ai/DeepSeek-V3` |
 | 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
@@ -71,6 +72,22 @@
 - 填写到版本号的 Base URL，例如 `https://api.openai.com/v1`，扩展会自动拼接 `/chat/completions`。
 - 直接粘贴完整的 `.../chat/completions` 地址。
 - 本地模型服务，例如 Ollama / LM Studio 的 OpenAI 兼容地址。
+
+#### OpenCode Go
+
+[OpenCode Go](https://opencode.ai/docs/console/go/) 是 OpenCode 的订阅套餐，提供 DeepSeek V4.1 Flash 等模型。使用步骤：
+
+1. 在 [OpenCode Console](https://opencode.ai/console) 订阅 Go，并创建个人 API Key（`oc_sk_...`）。
+2. 预设选择 **OpenCode Go**：Base URL 为 `https://opencode.ai/inference/go/openai/v1`，模型为 `deepseek-v4.1-flash`。
+3. 保存设置，并允许扩展访问 `opencode.ai`。
+
+Go 端点要求每个请求携带稳定的 `x-opencode-session` 会话标识。扩展会自动生成并附加该请求头：一次总结中的所有分段、合并和最终请求共用一个会话 ID，不需要手动填写，也不包含个人信息。
+
+注意事项：
+
+- 模型 ID 使用小写形式，例如 `deepseek-v4.1-flash`、`glm-5.3-flash`；完整列表见 [Go 文档](https://opencode.ai/docs/console/go/#models)。
+- DeepSeek V4.1 Flash 默认只允许 **Europe & US** 区域；如果遇到区域或权限错误，请在 Console 的 **Settings › Privacy › Regions** 中选择 **Global**。
+- Go 的流量策略面向 coding agent，批量字幕总结可能被纳入滥用监控；请自行确认使用方式符合其条款。
 
 ### 2. 授权 API 域名
 
