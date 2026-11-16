@@ -338,7 +338,9 @@
   }
 
   function chunkSegments(segments, maxChars) {
-    const limit = clamp(Number(maxChars) || 7000, 1000, 20000);
+    // Keep this upper bound in sync with settings.chunkChars and the options
+    // slider: a value the UI accepts must not be silently clamped here.
+    const limit = clamp(Number(maxChars) || 7000, 1000, 30000);
     const chunks = [];
     let lines = [];
     let length = 0;

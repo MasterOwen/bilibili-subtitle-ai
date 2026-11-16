@@ -125,6 +125,23 @@ test('chunks long subtitle transcripts without exceeding the limit', () => {
   assert.ok(chunks[1].from >= chunks[0].from);
 });
 
+test('honors the configured chunk limit up to 30000 characters', () => {
+  const segments = [];
+  for (let i = 0; i < 1200; i += 1) {
+    segments.push({
+      from: i * 2,
+      to: i * 2 + 1.5,
+      content: `第${i + 1}句较长字幕内容，用来验证分段上限没有被提前截断。`,
+    });
+  }
+  const wide = U.chunkSegments(segments, 30000);
+  const narrow = U.chunkSegments(segments, 20000);
+  assert.ok(wide.length < narrow.length, `30000 should need fewer chunks: ${wide.length} vs ${narrow.length}`);
+  const longest = Math.max(...wide.map((chunk) => chunk.text.length));
+  assert.ok(longest > 20000, `chunk should use the 20000-30000 range, got ${longest}`);
+  assert.ok(longest <= 30000, `chunk exceeded limit: ${longest}`);
+});
+
 test('renders Markdown safely and supports headings, lists, tables and code', () => {
   const html = U.renderMarkdown(
     [
