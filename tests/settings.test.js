@@ -96,10 +96,12 @@ test('resolves per-provider API keys by hostname', () => {
 });
 
 test('detects provider presets and configuration completeness', () => {
+  assert.equal(Settings.DEFAULTS.model, Settings.PRESETS.deepseek.model);
+  assert.equal(Settings.DEFAULTS.apiBaseUrl, Settings.PRESETS.deepseek.apiBaseUrl);
   assert.equal(
     Settings.presetForSettings({
       apiBaseUrl: 'https://api.deepseek.com/v1',
-      model: 'deepseek-chat',
+      model: 'deepseek-flash',
     }),
     'deepseek',
   );

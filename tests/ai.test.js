@@ -23,7 +23,7 @@ function config(overrides) {
     {
       apiBaseUrl: 'https://api.deepseek.com/v1',
       apiKey: 'sk-test',
-      model: 'deepseek-chat',
+      model: 'deepseek-flash',
       language: 'zh',
       style: 'structured',
       chunkChars: 3000,
@@ -56,7 +56,7 @@ test('callChat sends a Chat Completions request and extracts content', async () 
   assert.equal(captured.init.method, 'POST');
   assert.equal(captured.init.headers.Authorization, 'Bearer sk-test');
   assert.equal(captured.init.headers['x-opencode-session'], undefined);
-  assert.equal(captured.body.model, 'deepseek-chat');
+  assert.equal(captured.body.model, 'deepseek-flash');
   assert.equal(captured.body.max_tokens, 100);
   assert.equal(captured.body.stream, false);
   assert.equal(result.content, '## 总结\n内容');

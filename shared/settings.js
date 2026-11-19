@@ -18,7 +18,7 @@
     apiBaseUrl: 'https://api.deepseek.com/v1',
     apiKey: '',
     apiKeys: {},
-    model: 'deepseek-chat',
+    model: 'deepseek-flash',
     language: 'zh',
     style: 'structured',
     chunkChars: 7000,
@@ -31,7 +31,7 @@
     deepseek: {
       label: 'DeepSeek',
       apiBaseUrl: 'https://api.deepseek.com/v1',
-      model: 'deepseek-chat',
+      model: 'deepseek-flash',
       hint: '在 platform.deepseek.com 创建 API Key',
     },
     opencodeGo: {
@@ -43,19 +43,19 @@
     openai: {
       label: 'OpenAI',
       apiBaseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini',
+      model: 'gpt-6.2-sol',
       hint: '在 platform.openai.com 创建 API Key',
     },
     siliconflow: {
       label: '硅基流动',
       apiBaseUrl: 'https://api.siliconflow.cn/v1',
-      model: 'deepseek-ai/DeepSeek-V3',
+      model: 'deepseek-ai/DeepSeek-V4.1-Flash',
       hint: '在 cloud.siliconflow.cn 创建 API Key',
     },
     zhipu: {
       label: '智谱 GLM',
       apiBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-      model: 'glm-4-flash',
+      model: 'glm-5.3',
       hint: '在 open.bigmodel.cn 创建 API Key',
     },
     custom: {

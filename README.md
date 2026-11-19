@@ -63,12 +63,14 @@
 
 | 预设 | 默认 Base URL | 默认模型 |
 | --- | --- | --- |
-| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-flash` |
 | OpenCode Go | `https://opencode.ai/inference/go/openai/v1` | `deepseek-v4.1-flash` |
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
-| 硅基流动 | `https://api.siliconflow.cn/v1` | `deepseek-ai/DeepSeek-V3` |
-| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-6.2-sol` |
+| 硅基流动 | `https://api.siliconflow.cn/v1` | `deepseek-ai/DeepSeek-V4.1-Flash` |
+| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.3` |
 | 自定义 | 手动填写 | 手动填写 |
+
+> 预设模型名会随服务商更新。如果提示模型不存在或无权访问，请到对应平台文档确认最新模型名，然后在设置页手动修改。
 
 选择服务商后填写 **API Key**，按需修改模型名。每个服务商的 API Key 按 API 域名分别保存，切换预设时会自动使用该服务商已保存的 Key（输入框不会回显）。留空保存会保留原 Key，输入新 Key 会替换，点击输入框旁的「清除」并保存可删除该域名的 Key。支持：
 - 填写到版本号的 Base URL，例如 `https://api.openai.com/v1`，扩展会自动拼接 `/chat/completions`。
