@@ -12,6 +12,7 @@
 - **AI 视频总结**：支持 DeepSeek、OpenCode Go、OpenAI、硅基流动、智谱 GLM，以及任意 OpenAI Chat Completions 兼容接口。
 - **复制提示词**：无论是否配置 API Key，都可以把完整提示词复制到剪贴板，粘贴到 ChatGPT、Claude、DeepSeek 等网页 AI 中生成总结。
 - **长视频分段总结**：字幕按字数分段提炼，再合并为全局总结，避免一次性输入导致中段信息丢失。
+- **深度思考实时显示**：推理模型返回的思考过程（`reasoning_content`、`reasoning`、`reasoning_details` 等字段）会实时流式显示在「深度思考」区域，可随时展开或折叠。
 - **四种总结风格**：结构化摘要、精简要点、详细笔记、学习提纲，设置页和 AI 面板均可切换。
 - **导出**：
   - 字幕：`SRT`（完整时间轴）、`TXT`（可选时间戳）

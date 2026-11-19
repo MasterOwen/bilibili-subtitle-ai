@@ -42,7 +42,7 @@ test('callChat sends a Chat Completions request and extracts content', async () 
   globalThis.fetch = async (url, init) => {
     captured = { url, init, body: JSON.parse(init.body) };
     return jsonResponse({
-      choices: [{ message: { content: '## 总结\n内容' } }],
+      choices: [{ message: { content: '## 总结\n内容', reasoning_content: '先分析字幕结构' } }],
       usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
     });
   };
@@ -60,6 +60,7 @@ test('callChat sends a Chat Completions request and extracts content', async () 
   assert.equal(captured.body.max_tokens, 100);
   assert.equal(captured.body.stream, false);
   assert.equal(result.content, '## 总结\n内容');
+  assert.equal(result.reasoning, '先分析字幕结构');
   assert.equal(result.usage.totalTokens, 15);
 });
 
@@ -101,6 +102,102 @@ test('callChat streams SSE deltas into one answer', async () => {
   assert.equal(result.finishReason, 'stop');
   assert.deepEqual(deltas, ['第一', '段']);
   assert.equal(resets, 1);
+});
+
+test('callChat streams reasoning_content separately from the answer', async () => {
+  const encoder = new TextEncoder();
+  globalThis.fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          const events = [
+            'data: {"choices":[{"delta":{"reasoning_content":"先想"}}]}\n\n',
+            'data: {"choices":[{"delta":{"reasoning_content":"一下"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"结论"}}]}\n\n',
+            'data: [DONE]\n\n',
+          ];
+          for (const event of events) controller.enqueue(encoder.encode(event));
+          controller.close();
+        },
+      }),
+      { headers: { 'content-type': 'text/event-stream; charset=utf-8' } },
+    );
+  const reasoning = [];
+  const deltas = [];
+  const result = await AI.callChat({
+    config: config(),
+    messages: [{ role: 'user', content: '推理流测试' }],
+    stream: true,
+    onDelta: (text) => deltas.push(text),
+    onReasoning: (text) => reasoning.push(text),
+  });
+  assert.equal(result.reasoning, '先想一下');
+  assert.equal(result.content, '结论');
+  assert.deepEqual(reasoning, ['先想', '一下']);
+  assert.deepEqual(deltas, ['结论']);
+});
+
+test('callChat falls back to reasoning and reasoning_details without duplicating', async () => {
+  const encoder = new TextEncoder();
+  globalThis.fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              'data: {"choices":[{"delta":{"reasoning":"思考A","reasoning_details":[{"type":"reasoning.text","text":"思考A"}]}}]}\n\n',
+            ),
+          );
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        },
+      }),
+      { headers: { 'content-type': 'text/event-stream; charset=utf-8' } },
+    );
+  const reasoning = [];
+  await AI.callChat({
+    config: config(),
+    messages: [{ role: 'user', content: '字段优先级测试' }],
+    stream: true,
+    onReasoning: (text) => reasoning.push(text),
+  });
+  assert.deepEqual(reasoning, ['思考A']);
+});
+
+test('summarizeVideo forwards reasoning deltas with the active phase', async () => {
+  const encoder = new TextEncoder();
+  globalThis.fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode('data: {"choices":[{"delta":{"reasoning_content":"内部推理"}}]}\n\n'),
+          );
+          controller.enqueue(
+            encoder.encode('data: {"choices":[{"delta":{"content":"## 一句话概括 结论。"}}]}\n\n'),
+          );
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        },
+      }),
+      { headers: { 'content-type': 'text/event-stream; charset=utf-8' } },
+    );
+  const events = [];
+  const result = await AI.summarizeVideo({
+    video: { title: '测试', duration: 60, owner: 'UP' },
+    segments: [
+      { from: 0, to: 5, content: '第一句话' },
+      { from: 5, to: 10, content: '第二句话' },
+    ],
+    config: config({ chunkChars: 3000 }),
+    onDelta: (event) => events.push(event),
+  });
+  assert.match(result.summary, /结论/);
+  const reasoningEvents = events.filter((event) => event.reasoning === true);
+  assert.equal(reasoningEvents.length, 1);
+  assert.equal(reasoningEvents[0].text, '内部推理');
+  assert.equal(reasoningEvents[0].phase, 'final');
+  assert.ok(events.some((event) => event.reasoning !== true && event.text.includes('一句话概括')));
 });
 
 test('callChat lowers max_tokens when a provider rejects the requested budget', async () => {

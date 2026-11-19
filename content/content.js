@@ -161,6 +161,14 @@
               <span data-el="streamPhase">AI 正在输出…</span>
               <span class="bsai-stream-badge"><i></i>实时</span>
             </div>
+            <details class="bsai-reasoning" data-el="reasoning" hidden>
+              <summary class="bsai-reasoning-head">
+                <span class="bsai-reasoning-icon">${icon('sparkles')}</span>
+                <span>深度思考</span>
+                <span class="bsai-reasoning-meta" data-el="reasoningMeta"></span>
+              </summary>
+              <pre class="bsai-reasoning-text" data-el="reasoningText" aria-label="模型深度思考过程"></pre>
+            </details>
             <pre data-el="streamText" aria-label="AI 实时输出"></pre>
           </div>
 
@@ -207,6 +215,8 @@
     streamText: '',
     streamPhase: '',
     streamTimer: null,
+    reasoningText: '',
+    reasoningActive: false,
     promptCopying: false,
     summaryToken: 0,
     summaryPort: null,
@@ -1253,11 +1263,36 @@
     const refs = state.refs;
     if (!refs.aiStream || !refs.streamText) return;
     const pre = refs.streamText;
-    const nearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+    const hasAnswer = Boolean(state.streamText);
+    const answerNearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
     pre.textContent = state.streamText;
-    if (nearBottom) pre.scrollTop = pre.scrollHeight;
+    pre.hidden = !hasAnswer;
+    if (hasAnswer && answerNearBottom) pre.scrollTop = pre.scrollHeight;
+
+    if (refs.reasoning) {
+      const hasReasoning = Boolean(state.reasoningText);
+      refs.reasoning.hidden = !hasReasoning;
+      if (hasReasoning) {
+        const reasoningPre = refs.reasoningText;
+        if (reasoningPre) {
+          const reasoningNearBottom =
+            reasoningPre.scrollHeight - reasoningPre.scrollTop - reasoningPre.clientHeight < 40;
+          reasoningPre.textContent = state.reasoningText;
+          if (reasoningNearBottom) reasoningPre.scrollTop = reasoningPre.scrollHeight;
+        }
+        if (refs.reasoningMeta) {
+          refs.reasoningMeta.textContent = state.reasoningActive
+            ? `思考中… ${state.reasoningText.length} 字`
+            : `已思考 ${state.reasoningText.length} 字`;
+        }
+      }
+    }
+
     refs.aiStream.hidden = false;
-    if (refs.streamPhase) refs.streamPhase.textContent = state.streamPhase || 'AI 正在输出…';
+    if (refs.streamPhase) {
+      const phase = state.streamPhase || 'AI 正在输出…';
+      refs.streamPhase.textContent = state.reasoningActive ? `${phase} · 深度思考中` : phase;
+    }
   }
 
   function scheduleAiStreamRender() {
@@ -1282,13 +1317,33 @@
     }
     if (delta.reset) {
       state.streamText = '';
+      state.reasoningText = '';
+      state.reasoningActive = false;
     }
-    if (typeof delta.text === 'string' && delta.text) {
-      state.streamText += delta.text;
+
+    const text = typeof delta.text === 'string' ? delta.text : '';
+    if (delta.reasoning) {
+      if (text) {
+        if (!state.reasoningText && state.refs.reasoning) state.refs.reasoning.open = true;
+        state.reasoningActive = true;
+        state.reasoningText += text;
+        if (state.reasoningText.length > 60000) {
+          state.reasoningText = state.reasoningText.slice(-60000);
+        }
+      }
+    } else if (text) {
+      if (state.reasoningActive) {
+        state.reasoningActive = false;
+        // The model moved on to the visible answer; keep the trace available
+        // but collapse it so the stream area shows the answer.
+        if (state.reasoningText && state.refs.reasoning) state.refs.reasoning.open = false;
+      }
+      state.streamText += text;
       if (state.streamText.length > 40000) {
         state.streamText = state.streamText.slice(-40000);
       }
     }
+
     if (delta.reset) renderAiStream();
     else scheduleAiStreamRender();
   }
@@ -1300,9 +1355,17 @@
     }
     state.streamText = '';
     state.streamPhase = '';
+    state.reasoningText = '';
+    state.reasoningActive = false;
     if (state.refs.aiStream) state.refs.aiStream.hidden = true;
     if (state.refs.streamText) state.refs.streamText.textContent = '';
     if (state.refs.streamPhase) state.refs.streamPhase.textContent = '';
+    if (state.refs.reasoning) {
+      state.refs.reasoning.hidden = true;
+      state.refs.reasoning.open = true;
+    }
+    if (state.refs.reasoningText) state.refs.reasoningText.textContent = '';
+    if (state.refs.reasoningMeta) state.refs.reasoningMeta.textContent = '';
   }
 
   function armSummaryWatchdog() {

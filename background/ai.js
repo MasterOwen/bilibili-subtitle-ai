@@ -376,11 +376,53 @@ ${notes}${customRequirement(config)}`,
     }
   }
 
+  function reasoningTextFromValue(value) {
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+      return value
+        .map((part) => {
+          if (typeof part === 'string') return part;
+          if (part && typeof part.text === 'string') return part.text;
+          if (part && typeof part.summary === 'string') return part.summary;
+          return '';
+        })
+        .join('');
+    }
+    return '';
+  }
+
+  /**
+   * Reasoning models expose their chain of thought under different field names:
+   * DeepSeek/SiliconFlow use reasoning_content, OpenRouter uses reasoning and
+   * reasoning_details, some gateways use reasoning_text or thinking. Only the
+   * first field present is used so a provider echoing the same text under two
+   * names cannot duplicate it.
+   */
+  function reasoningFromDelta(delta) {
+    if (!delta || typeof delta !== 'object') return '';
+    for (const key of ['reasoning_content', 'reasoning', 'reasoning_text', 'thinking']) {
+      const text = reasoningTextFromValue(delta[key]);
+      if (text) return text;
+    }
+    return reasoningTextFromValue(delta.reasoning_details);
+  }
+
+  function extractReasoning(payload) {
+    const choice = payload && Array.isArray(payload.choices) ? payload.choices[0] : null;
+    if (!choice) return '';
+    if (choice.message && typeof choice.message === 'object') {
+      const fromMessage = reasoningFromDelta(choice.message);
+      if (fromMessage) return fromMessage;
+    }
+    return reasoningFromDelta(choice);
+  }
+
   async function readStreamResponse(response, opts, totalUsage) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let content = '';
+    let reasoning = '';
     let finishReason = '';
 
     function consume(line) {
@@ -406,6 +448,11 @@ ${notes}${customRequirement(config)}`,
       const choice = payload && Array.isArray(payload.choices) ? payload.choices[0] : null;
       if (!choice) return;
       if (choice.finish_reason) finishReason = String(choice.finish_reason);
+      const reasoningPiece = reasoningFromDelta(choice.delta);
+      if (reasoningPiece) {
+        reasoning += reasoningPiece;
+        streamDelta(reasoningPiece, opts.onReasoning);
+      }
       const piece =
         (choice.delta && textFromContent(choice.delta.content)) ||
         (choice.delta && textFromContent(choice.delta.text)) ||
@@ -438,7 +485,7 @@ ${notes}${customRequirement(config)}`,
       }
     }
 
-    return { content: content.trim(), usage: totalUsage, raw: null, finishReason };
+    return { content: content.trim(), usage: totalUsage, raw: null, finishReason, reasoning: reasoning.trim() };
   }
 
   async function callChat(options) {
@@ -565,6 +612,7 @@ ${notes}${customRequirement(config)}`,
           usage: totalUsage,
           raw: payload,
           finishReason: choice && choice.finish_reason ? String(choice.finish_reason) : '',
+          reasoning: extractReasoning(payload),
         };
       } catch (error) {
         const aborted = error && error.name === 'AbortError';
@@ -743,6 +791,7 @@ ${notes}${customRequirement(config)}`,
       return {
         stream: true,
         onDelta: (text) => onDelta({ phase, current, total, text }),
+        onReasoning: (text) => onDelta({ phase, current, total, text, reasoning: true }),
         onReset: () => onDelta({ phase, current, total, text: '', reset: true }),
       };
     }
