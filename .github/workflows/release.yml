@@ -58,14 +58,19 @@ jobs:
         run: npm test
 
       - name: Build release archive
+        id: build
         run: |
           set -euo pipefail
+          version="$(node -p 'require("./manifest.json").version')"
           SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
           export SOURCE_DATE_EPOCH
           npm run build
           cd dist
-          sha256sum bilibili-subtitle-ai-v*.zip > SHA256SUMS.txt
+          zip="bilibili-subtitle-ai-v${version}.zip"
+          test -f "$zip"
+          sha256sum "$zip" > SHA256SUMS.txt
           cat SHA256SUMS.txt
+          echo "zip=${zip}" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -75,5 +80,5 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            dist/bilibili-subtitle-ai-v*.zip
+            dist/${{ steps.build.outputs.zip }}
             dist/SHA256SUMS.txt
