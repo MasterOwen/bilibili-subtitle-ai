@@ -3,6 +3,28 @@
   "version": "1.0.12",
   "private": true,
   "description": "Bilibili subtitle downloader and AI summarizer browser extension",
+  "keywords": [
+    "chrome-extension",
+    "edge-extension",
+    "manifest-v3",
+    "bilibili",
+    "subtitle",
+    "srt",
+    "ai",
+    "summarizer",
+    "deepseek",
+    "openai"
+  ],
+  "homepage": "https://github.com/MasterOwen/bilibili-subtitle-ai#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MasterOwen/bilibili-subtitle-ai.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MasterOwen/bilibili-subtitle-ai/issues"
+  },
+  "license": "MIT",
+  "author": "MasterOwen (https://github.com/MasterOwen)",
   "scripts": {
     "build": "node scripts/build.js",
     "test": "node tests/utils.test.js && node tests/settings.test.js && node tests/manifest.test.js && node tests/ai.test.js",
