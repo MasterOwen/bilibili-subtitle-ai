@@ -1,0 +1,6 @@
+# 统一使用 LF：仓库在 Windows 上检出时不会把文本转成 CRLF，
+# 否则本地构建的 ZIP 与 CI 构建的 ZIP 内容字节会不一致（build.js 支持可复现打包）。
+* text=auto eol=lf
+
+*.png binary
+*.zip binary

@@ -81,3 +81,20 @@ test('manifest does not use remote code or unsafe CSP relaxation', () => {
   assert.doesNotMatch(worker, /\beval\s*\(/);
   assert.doesNotMatch(worker, /new\s+Function\s*\(/);
 });
+
+test('version has a single source of truth', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(manifest.version, pkg.version, 'manifest.json 与 package.json 的 version 不一致');
+
+  // Chrome 要求 1-4 段点分数字；发布 tag 去掉前缀 v 后要能直接与它比对。
+  assert.match(manifest.version, /^\d{1,4}(\.\d{1,4}){1,3}$/, 'manifest.version 必须是点分数字');
+
+  for (const page of ['popup/popup.html', 'options/options.html']) {
+    const html = fs.readFileSync(path.join(root, page), 'utf8');
+    assert.match(
+      html,
+      /id="version"[^>]*>\s*<\/span>/,
+      `${page} 不要写死版本号，运行时由 chrome.runtime.getManifest().version 填充`,
+    );
+  }
+});

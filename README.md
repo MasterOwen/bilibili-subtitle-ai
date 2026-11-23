@@ -1,5 +1,10 @@
 # B站字幕 AI 总结
 
+[![CI](https://github.com/MasterOwen/bilibili-subtitle-ai/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MasterOwen/bilibili-subtitle-ai/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/MasterOwen/bilibili-subtitle-ai?sort=semver&display_name=tag&label=release)](https://github.com/MasterOwen/bilibili-subtitle-ai/releases/latest)
+[![License](https://img.shields.io/github/license/MasterOwen/bilibili-subtitle-ai)](LICENSE)
+[![Chrome 114+](https://img.shields.io/badge/Chrome-114%2B-4285F4?logo=googlechrome&logoColor=white)](#安装)
+
 一个 Chrome / Edge 浏览器扩展（Manifest V3）：在 Bilibili 视频播放页获取当前视频字幕，交给 AI 生成结构化总结，并支持导出字幕与总结文件。
 
 字幕可以直接导出为 **SRT**、**TXT**；AI 总结可以导出为 **Markdown**、**TXT**。所有数据只在本机处理，不经过本扩展的服务器。
@@ -43,13 +48,28 @@
 
 要求 Chrome / Edge **114 或更高版本**。
 
-1. 下载并解压本项目（或使用发布的 ZIP）。
-2. 打开浏览器扩展管理页：
+### 方式一：下载发布包（推荐）
+
+[**⬇️ 下载最新版本 ZIP**](https://github.com/MasterOwen/bilibili-subtitle-ai/releases/latest)
+
+1. 打开上面的 Release 页面，下载 `bilibili-subtitle-ai-v*.zip`（同页的 `SHA256SUMS.txt` 可用于校验文件完整性）。
+2. 解压 ZIP。压缩包条目位于根目录，解压出来的文件夹就是扩展目录。
+3. 打开浏览器扩展管理页：
    - Chrome：`chrome://extensions/`
    - Edge：`edge://extensions/`
-3. 打开右上角的 **开发者模式**。
-4. 点击 **加载已解压的扩展程序**，选择包含 `manifest.json` 的文件夹。
-5. 打开任意 Bilibili 视频或列表播放页（稍后再看/收藏夹/合集）。页面右侧会出现「字幕总结」悬浮按钮；也可以点击扩展图标打开面板。
+4. 打开右上角的 **开发者模式**。
+5. 点击 **加载已解压的扩展程序**，选择上一步解压出的文件夹（包含 `manifest.json` 的那一层）。
+6. 打开任意 Bilibili 视频或列表播放页（稍后再看/收藏夹/合集）。页面右侧会出现「字幕总结」悬浮按钮；也可以点击扩展图标打开面板。
+
+### 方式二：从源码构建
+
+```bash
+git clone https://github.com/MasterOwen/bilibili-subtitle-ai.git
+cd bilibili-subtitle-ai
+npm run build
+```
+
+构建产物在 `dist/bilibili-subtitle-ai-v<version>/`，按「方式一」第 3 步开始加载该目录即可。运行时本身不需要构建，也可以直接把仓库根目录当作已解压扩展加载。
 
 > 扩展安装或更新后，已经打开的 B站页面需要刷新一次才能注入最新内容脚本。
 
@@ -174,6 +194,9 @@ Go 端点要求每个请求携带稳定的 `x-opencode-session` 会话标识。�
 ```text
 bilibili-subtitle-ai/
 ├─ manifest.json
+├─ .github/workflows/
+│  ├─ ci.yml                 # push / PR：语法检查 + 单元测试
+│  └─ release.yml            # 推送 v* tag：构建校验并创建 Release
 ├─ background/
 │  ├─ service-worker.js      # B站 API、字幕下载、消息路由
 │  └─ ai.js                  # OpenAI 兼容接口、分段/合并总结
@@ -218,6 +241,21 @@ npm run build
 $env:SOURCE_DATE_EPOCH="1763200000"
 npm run build
 ```
+
+### 发布新版本
+
+版本号只有两个来源：`manifest.json` 和 `package.json`，`npm test` 会校验两者一致，并确认页面里没有写死版本号。发版流程：
+
+1. 同时修改这两个文件的 `version`（遵循语义化版本）。
+2. 提交并推送 `main`，确认 CI 通过。
+3. 打 tag 并推送，`release.yml` 会自动做语法检查、单元测试、构建，并把 ZIP 与 `SHA256SUMS.txt` 上传到 GitHub Release：
+
+```bash
+git tag v1.0.13
+git push origin v1.0.13
+```
+
+tag 名（去掉开头的 `v`）必须与 `manifest.version` 完全一致，否则工作流会直接失败。需要补发历史版本时，也可以在 Actions 页面手动触发 `Release` 并填入已存在的 tag。
 
 浏览器 UI 冒烟测试使用 Playwright Core + Chromium，会启动一个本地 Chromium，并用 mock service worker 驱动真实面板：
 
