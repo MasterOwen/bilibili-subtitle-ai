@@ -226,6 +226,9 @@ $env:PLAYWRIGHT_CORE="C:\path\to\playwright-core"
 node tests/browser-smoke.js
 ```
 
+测试用的 HTTPS 证书由脚本在运行时调用系统 `openssl` 现场生成，仓库不保存任何私钥；
+如果 `openssl` 不在 PATH 上，可用 `OPENSSL` 环境变量指定可执行文件路径。
+
 它会生成 `preview/panel-subtitles.png`、`preview/panel-summary.png`、`preview/options.png`，并验证 SRT/TXT/MD 导出。
 
 真实扩展后台检查：

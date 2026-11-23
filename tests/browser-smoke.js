@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const https = require('node:https');
 const { spawn, spawnSync } = require('node:child_process');
+const { generateCertificate } = require('./mock/generate-cert');
 
 const ROOT = path.join(__dirname, '..');
 const RUN_DIR = path.join(__dirname, '.tmp-run');
@@ -74,11 +75,10 @@ function buildTestExtension() {
 
 function startServer() {
   const page = fs.readFileSync(path.join(__dirname, 'mock', 'page.html'));
+  // 证书在运行时用 openssl 现场生成，仓库不保存私钥。
+  const { key, cert } = generateCertificate({ dir: path.join(RUN_DIR, 'certs') });
   const server = https.createServer(
-    {
-      key: fs.readFileSync(path.join(__dirname, 'mock', 'key.pem')),
-      cert: fs.readFileSync(path.join(__dirname, 'mock', 'cert.pem')),
-    },
+    { key, cert },
     (req, res) => {
       if (req.url && req.url.startsWith('/video/')) {
         res.writeHead(200, {
