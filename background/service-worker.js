@@ -2,10 +2,11 @@
  * MV3 service worker: Bilibili API access, subtitle downloading, settings and
  * the long-lived AI summary port.
  */
-importScripts('/shared/utils.js', '/shared/settings.js', '/background/ai.js');
+importScripts('/shared/utils.js', '/shared/settings.js', '/shared/history.js', '/background/ai.js');
 
 const U = self.BiliSubUtils;
 const Settings = self.BiliSubSettings;
+const History = self.BiliSubHistory;
 const AI = self.BiliAI;
 
 const BILI_WEB_ORIGIN = 'https://www.bilibili.com';
@@ -32,6 +33,7 @@ function errorResponse(error) {
     version: chrome.runtime.getManifest().version,
     features: {
       openCodeSession: Boolean(AI && AI.FEATURES && AI.FEATURES.openCodeSession),
+      summaryHistory: Boolean(History),
     },
   };
 }
@@ -470,6 +472,47 @@ async function checkAiPermission(config) {
   }
 }
 
+/**
+ * Persist a finished summary so a refresh, a closed tab or a failed subtitle
+ * fetch does not throw away something the user paid for. History failures must
+ * never break the summary itself, so every error is reported, not thrown.
+ */
+async function saveSummaryHistory(video, segments, settings, result, subtitleMeta) {
+  if (!History) return { saved: false, error: '历史模块未加载' };
+  try {
+    const entry = History.buildEntry({
+      video,
+      segments,
+      summary: result && result.summary,
+      generatedAt: result && result.generatedAt,
+      appVersion: chrome.runtime.getManifest().version,
+      meta: {
+        model: settings.model,
+        style: settings.style,
+        language: settings.language,
+        stats: result && result.stats,
+        subtitle: subtitleMeta || {},
+      },
+    });
+    if (!entry) return { saved: false, error: '总结为空，未写入历史', key: History.entryKey(video) };
+    const saved = await History.upsertHistory(entry);
+    return {
+      saved: true,
+      key: entry.key,
+      count: saved.totals.count,
+      bytes: saved.totals.bytes,
+      evicted: saved.evicted.length,
+      quotaRetry: Boolean(saved.quotaRetry),
+    };
+  } catch (error) {
+    return {
+      saved: false,
+      key: History.entryKey(video),
+      error: error && error.message ? error.message : '写入历史失败',
+    };
+  }
+}
+
 async function runSummary(port, controller, payload) {
   const settings = await Settings.loadSettings();
   if (!Settings.isConfigured(settings)) {
@@ -480,7 +523,7 @@ async function runSummary(port, controller, payload) {
   const segments = payload && Array.isArray(payload.segments) ? payload.segments : [];
   if (!segments.length) throw new Error('当前没有可总结的字幕');
 
-  return AI.summarizeVideo({
+  const result = await AI.summarizeVideo({
     video,
     segments,
     config: settings,
@@ -488,6 +531,15 @@ async function runSummary(port, controller, payload) {
     onProgress: (progress) => safePost(port, { type: 'progress', progress }),
     onDelta: (delta) => safePost(port, { type: 'delta', delta }),
   });
+  const history = await saveSummaryHistory(
+    video,
+    segments,
+    settings,
+    result,
+    payload && payload.subtitle,
+  );
+  result.history = history;
+  return result;
 }
 
 function safePost(port, message) {
@@ -526,6 +578,7 @@ chrome.runtime.onConnect.addListener((port) => {
           summary: result.summary,
           generatedAt: result.generatedAt instanceof Date ? result.generatedAt.toISOString() : '',
           stats: result.stats,
+          history: result.history || null,
         });
       })
       .catch((error) => {
@@ -610,6 +663,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((error) => sendResponse(errorResponse(error)));
     return true;
   }
+  if (message.type === 'HISTORY_DELETE') {
+    History.deleteEntry(message.key)
+      .then((result) => sendResponse(Object.assign({ ok: true }, result)))
+      .catch((error) => sendResponse(errorResponse(error)));
+    return true;
+  }
+  if (message.type === 'HISTORY_CLEAR') {
+    History.clearHistory()
+      .then((result) => sendResponse(Object.assign({ ok: true }, result)))
+      .catch((error) => sendResponse(errorResponse(error)));
+    return true;
+  }
   if (message.type === 'OPEN_OPTIONS') {
     try {
       chrome.runtime.openOptionsPage(() => {
@@ -628,6 +693,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       version: chrome.runtime.getManifest().version,
       features: {
         openCodeSession: Boolean(AI && AI.FEATURES && AI.FEATURES.openCodeSession),
+        summaryHistory: Boolean(History),
       },
     });
     return false;

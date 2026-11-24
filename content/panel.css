@@ -267,7 +267,8 @@ textarea {
 .bsai-track-select:focus-visible,
 .bsai-search:focus-visible,
 .bsai-tab:focus-visible,
-.bsai-sub-row:focus-visible {
+.bsai-sub-row:focus-visible,
+.bsai-history-main:focus-visible {
   outline: 2px solid rgba(251, 114, 153, 0.75);
   outline-offset: 2px;
 }
@@ -1270,6 +1271,135 @@ textarea {
 
 .bsai-summary-meta[hidden] {
   display: none !important;
+}
+
+/* ---------------------------------------------------------------------------
+ * Summary history
+ * ------------------------------------------------------------------------ */
+
+.bsai-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+}
+
+.bsai-history-usage {
+  min-width: 0;
+  overflow: hidden;
+  color: #7c8395;
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bsai-history-head .bsai-btn {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 10.5px;
+}
+
+.bsai-history-list {
+  flex: 1;
+  min-height: 0;
+  margin-top: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.045);
+  scrollbar-color: #3b4050 transparent;
+  scrollbar-width: thin;
+}
+
+.bsai-history-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.bsai-history-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #363c4c;
+}
+
+.bsai-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 3px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.038);
+}
+
+.bsai-history-item.is-current {
+  border-left: 2px solid #fb7299;
+  border-radius: 5px;
+  background: rgba(251, 114, 153, 0.05);
+  padding-left: 8px;
+}
+
+.bsai-history-main {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bsai-history-main:hover .bsai-history-title {
+  color: #fff;
+}
+
+.bsai-history-title {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #dcdfe9;
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1.45;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.bsai-history-meta {
+  margin-top: 2px;
+  overflow: hidden;
+  color: #6f7686;
+  font-size: 9.5px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bsai-history-preview {
+  display: -webkit-box;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #8b92a4;
+  font-size: 10px;
+  line-height: 1.5;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.bsai-history-actions {
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+.bsai-history-actions .bsai-btn {
+  height: 23px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
+.bsai-history-actions .bsai-btn[data-history-act='delete'] {
+  color: #c08d97;
 }
 
 .bsai-footer {

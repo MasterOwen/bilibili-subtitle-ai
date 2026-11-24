@@ -8,7 +8,8 @@
 
   const U = globalThis.BiliSubUtils;
   const Settings = globalThis.BiliSubSettings;
-  if (!U || !Settings) return;
+  const History = globalThis.BiliSubHistory;
+  if (!U || !Settings || !History) return;
 
   const ROOT_ID = 'bsai-root';
   const CONTENT_SOURCE = 'bsai-content';
@@ -90,6 +91,9 @@
           字幕<span class="bsai-tab-count" data-el="tabSubCount" hidden></span>
         </button>
         <button class="bsai-tab" type="button" role="tab" aria-selected="false" data-tab="ai">AI 总结</button>
+        <button class="bsai-tab" type="button" role="tab" aria-selected="false" data-tab="history">
+          历史<span class="bsai-tab-count" data-el="tabHistoryCount" hidden></span>
+        </button>
       </nav>
 
       <div class="bsai-body">
@@ -176,6 +180,16 @@
           <div class="bsai-summary-meta" data-el="summaryMeta" hidden></div>
           <div class="bsai-empty" data-el="aiEmpty" hidden></div>
         </section>
+
+        <section class="bsai-view" data-view="history" hidden>
+          <div class="bsai-history-head">
+            <span class="bsai-history-usage" data-el="historyUsage">本机历史</span>
+            <button class="bsai-btn subtle" type="button" data-act="clear-history" data-el="clearHistory" disabled>清空</button>
+          </div>
+          <div class="bsai-status" data-el="historyStatus" role="status"></div>
+          <div class="bsai-history-list" data-el="historyList"></div>
+          <div class="bsai-empty" data-el="historyEmpty" hidden></div>
+        </section>
       </div>
 
       <footer class="bsai-footer">
@@ -209,9 +223,14 @@
     summary: '',
     summaryGeneratedAt: null,
     summaryStats: null,
+    summaryFromHistory: false,
     summaryLoading: false,
     summaryStyle: '',
     styleSaving: false,
+    historyItems: [],
+    historyTotals: null,
+    historyKey: '',
+    historyRestoring: false,
     streamText: '',
     streamPhase: '',
     streamTimer: null,
@@ -272,6 +291,7 @@
     });
     bindPanelEvents();
     renderStylePicker();
+    refreshHistory();
     state.refs.cover.addEventListener('error', () => {
       state.refs.cover.hidden = true;
     });
@@ -318,9 +338,15 @@
       loadSubtitle(track);
     });
     state.shadow.addEventListener('click', (event) => {
-      const action = event.target.closest('[data-empty-act]');
-      if (!action) return;
-      handleEmptyAction(action.dataset.emptyAct);
+      const emptyAction = event.target.closest('[data-empty-act]');
+      if (emptyAction) {
+        handleEmptyAction(emptyAction.dataset.emptyAct);
+        return;
+      }
+      const historyAction = event.target.closest('[data-history-act]');
+      if (historyAction) {
+        onHistoryAction(historyAction.dataset.historyAct, historyAction.dataset.key);
+      }
     });
   }
 
@@ -361,6 +387,9 @@
       case 'stop':
         stopSummary();
         break;
+      case 'clear-history':
+        clearAllHistory();
+        break;
       default:
         break;
     }
@@ -381,6 +410,8 @@
     if (state.open) {
       if (!state.loaded && !state.loading) loadVideo();
       if (!state.aiStatus || Date.now() - state.aiStatusAt > 30000) refreshAiStatus();
+      if (state.loaded && !state.summary) restoreFromHistory();
+      refreshHistory();
     }
   }
 
@@ -394,7 +425,7 @@
   }
 
   function switchTab(tab) {
-    if (tab !== 'sub' && tab !== 'ai') return;
+    if (tab !== 'sub' && tab !== 'ai' && tab !== 'history') return;
     state.activeTab = tab;
     refsAll('[data-tab]').forEach((button) => {
       const active = button.dataset.tab === tab;
@@ -408,6 +439,7 @@
       renderAiEmpty();
       updateAiButtons();
     }
+    if (tab === 'history') refreshHistory();
   }
 
   async function openOptions() {
@@ -706,6 +738,7 @@
     state.summary = '';
     state.summaryGeneratedAt = null;
     state.summaryStats = null;
+    state.summaryFromHistory = false;
     state.aiError = '';
     resetAiStream();
     if (state.refs.summary) {
@@ -732,6 +765,8 @@
     state.summary = '';
     state.summaryGeneratedAt = null;
     state.summaryStats = null;
+    state.summaryFromHistory = false;
+    state.historyKey = '';
     state.warnings = [];
     state.aiError = '';
     state.loaded = false;
@@ -990,6 +1025,7 @@
       state.warnings = (response.warnings || []).slice(0, 3);
       state.loading = false;
       state.loaded = true;
+      state.historyKey = state.video ? History.entryKey(state.video) : '';
       if (state.video) renderVideo(state.video);
 
       if (!state.tracks.length) {
@@ -1005,6 +1041,22 @@
         setSubLoading(false);
         renderTrackSelect();
         updateSubtitleButtons();
+        // No live subtitles: a saved snapshot still lets the user review and
+        // export instead of staring at an empty panel.
+        const restored = await restoreFromHistory({ reason: 'offline' });
+        if (token !== state.loadToken) return;
+        if (restored) {
+          updateAiButtons();
+          if (!state.segments.length) {
+            showSubtitleEmpty({
+              icon: 'subtitles',
+              title: '历史记录里没有字幕快照',
+              desc: '这次历史只保存了总结正文。可以直接在「AI 总结」里查看已恢复的总结，或重试获取在线字幕。',
+              actions: [{ label: '重试', act: 'retry', icon: 'refresh', primary: true }],
+            });
+          }
+          return;
+        }
         const reason =
           response.reason ||
           '该视频没有可用字幕。B站只对部分视频提供字幕；AI 字幕需要视频本身已生成语音识别结果。';
@@ -1043,6 +1095,10 @@
       renderTrackSelect();
       updateSubtitleButtons();
       if (preferred) await loadSubtitle(preferred, token);
+      if (token !== state.loadToken) return;
+      // Fresh subtitles are loaded; the saved summary (if any) belongs back on
+      // screen so a refresh does not look like the work was lost.
+      if (!state.summary) await restoreFromHistory();
       if (response.warnings && response.warnings.length) {
         setStatus(state.refs.subStatus, response.warnings[0], 'warn');
       }
@@ -1151,6 +1207,16 @@
       setStatus(state.refs.subStatus, error.message || '字幕下载失败', 'error');
       updateAiCopy();
       updateAiButtons();
+      // Bilibili sometimes stops serving an old subtitle URL; the snapshot from
+      // a previous session keeps this video usable.
+      const restored = await restoreFromHistory({ reason: 'offline' });
+      if (restored && token === state.trackToken) {
+        setStatus(
+          state.refs.subStatus,
+          `字幕下载失败（${error.message || '未知错误'}），已恢复本地保存的字幕快照。`,
+          'warn',
+        );
+      }
     }
   }
 
@@ -1432,8 +1498,21 @@
       duration: state.video ? state.video.duration : 0,
       url: state.video ? state.video.url : location.href,
       bvid: state.video ? state.video.bvid : '',
+      cid: state.video ? state.video.cid : 0,
       pageNo: state.video ? state.video.pageNo : 1,
       pageCount: state.video ? state.video.pageCount : 1,
+    };
+  }
+
+  /** Subtitle track metadata stored alongside the summary for later review. */
+  function currentTrackMeta() {
+    const track = state.trackMap.get(state.selectedTrackKey) || null;
+    if (!track) return null;
+    return {
+      lan: track.lan || '',
+      lanDoc: track.lanDoc || track.lan || '',
+      author: track.author || '',
+      isAi: Boolean(track.isAi),
     };
   }
 
@@ -1529,6 +1608,7 @@
       } else if (message.type === 'done') {
         clearTimeout(state.summaryWatchdog);
         state.summary = message.summary || '';
+        state.summaryFromHistory = false;
         state.summaryGeneratedAt = message.generatedAt ? new Date(message.generatedAt) : new Date();
         if (Number.isNaN(state.summaryGeneratedAt.getTime())) state.summaryGeneratedAt = new Date();
         state.summaryStats = message.stats || null;
@@ -1544,12 +1624,15 @@
           state.refs.summary.hidden = false;
           state.refs.summary.scrollTop = 0;
         }
+        const historyInfo = message.history || null;
+        if (historyInfo && historyInfo.saved && historyInfo.key) state.historyKey = historyInfo.key;
         if (state.refs.summaryMeta) {
           const stats = state.summaryStats;
           const pieces = [
             `生成于 ${U.formatLocalDateTime(state.summaryGeneratedAt)}`,
             state.aiStatus && state.aiStatus.model ? state.aiStatus.model : '',
             stats && stats.chunks ? `${stats.chunks} 个分段` : '',
+            historyInfo && historyInfo.saved ? '已存入本地历史' : '',
           ].filter(Boolean);
           state.refs.summaryMeta.textContent = pieces.join(' · ');
           state.refs.summaryMeta.hidden = false;
@@ -1558,6 +1641,14 @@
         hideEmpty(state.refs.aiEmpty);
         cleanupSummaryPort();
         updateAiButtons();
+        if (historyInfo && historyInfo.saved) {
+          refreshHistory();
+          if (historyInfo.quotaRetry) {
+            showToast('存储空间接近上限，只保留了最新总结', 'error', 4200);
+          }
+        } else if (historyInfo && historyInfo.error) {
+          showToast(`总结已生成，但未能存入历史：${historyInfo.error}`, 'error', 4200);
+        }
       } else if (message.type === 'error') {
         clearTimeout(state.summaryWatchdog);
         state.summaryLoading = false;
@@ -1605,6 +1696,7 @@
         payload: {
           video: summaryVideoPayload(),
           segments: summarySegmentsPayload(),
+          subtitle: currentTrackMeta(),
         },
       });
     } catch (error) {
@@ -1665,6 +1757,389 @@
       state.summaryLoading = false;
       cleanupSummaryPort();
       updateAiButtons();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Summary history (local, bounded)
+  // ---------------------------------------------------------------------------
+  function updateHistoryCount() {
+    const badge = state.refs.tabHistoryCount;
+    if (!badge) return;
+    const count = state.historyItems.length;
+    badge.textContent = count ? String(count) : '';
+    badge.hidden = !count;
+  }
+
+  async function refreshHistory() {
+    if (!state.host || !state.refs.historyList) return;
+    try {
+      const result = await History.listHistory();
+      state.historyItems = Array.isArray(result.items) ? result.items : [];
+      state.historyTotals = result.totals || null;
+    } catch (_) {
+      state.historyItems = [];
+      state.historyTotals = null;
+    }
+    renderHistory();
+  }
+
+  function historyMetaLine(item) {
+    const parts = [];
+    if (item.owner) parts.push(item.owner);
+    if (item.pageCount > 1) parts.push(`P${item.pageNo}/${item.pageCount}`);
+    const when = item.generatedAt || item.savedAt;
+    if (when) {
+      const label = U.formatLocalDateTime(new Date(when));
+      if (label) parts.push(label);
+    }
+    if (item.model) parts.push(item.model);
+    parts.push(summaryStyleLabel(item.style));
+    if (item.hasSubtitles) parts.push(`${item.subtitleCount} 条字幕`);
+    else parts.push('无字幕快照');
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  function historyActionButton(item, action, label, title) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'bsai-btn';
+    button.dataset.historyAct = action;
+    button.dataset.key = item.key;
+    button.title = title;
+    button.textContent = label;
+    return button;
+  }
+
+  function historyRow(item) {
+    const row = document.createElement('article');
+    row.className = 'bsai-history-item';
+    if (state.historyKey && item.key === state.historyKey) row.classList.add('is-current');
+
+    const main = document.createElement('button');
+    main.type = 'button';
+    main.className = 'bsai-history-main';
+    main.dataset.historyAct = 'load';
+    main.dataset.key = item.key;
+    main.title = '载入这条总结';
+
+    const title = document.createElement('div');
+    title.className = 'bsai-history-title';
+    title.textContent = item.title || item.bvid || item.key;
+
+    const meta = document.createElement('div');
+    meta.className = 'bsai-history-meta';
+    meta.textContent = historyMetaLine(item);
+
+    const preview = document.createElement('div');
+    preview.className = 'bsai-history-preview';
+    preview.textContent = item.summaryPreview || '';
+
+    main.append(title, meta, preview);
+
+    const actions = document.createElement('div');
+    actions.className = 'bsai-history-actions';
+    actions.append(
+      historyActionButton(item, 'export-md', 'MD', '导出 Markdown'),
+      historyActionButton(item, 'export-txt', 'TXT', '导出纯文本'),
+      historyActionButton(item, 'delete', '删除', '删除这条历史总结'),
+    );
+
+    row.append(main, actions);
+    return row;
+  }
+
+  function renderHistory() {
+    const list = state.refs.historyList;
+    if (!list) return;
+    const totals = state.historyTotals;
+    if (state.refs.historyUsage) {
+      state.refs.historyUsage.textContent = totals
+        ? `${totals.count}/${totals.maxEntries} 条 · ${History.formatBytes(
+            totals.bytes,
+          )} / ${History.formatBytes(totals.maxBytes)}`
+        : '本机历史';
+    }
+    if (state.refs.clearHistory) state.refs.clearHistory.disabled = !state.historyItems.length;
+    updateHistoryCount();
+    list.replaceChildren();
+    if (!state.historyItems.length) {
+      list.hidden = true;
+      setEmpty(state.refs.historyEmpty, {
+        icon: 'clock',
+        title: '还没有历史总结',
+        desc: `生成总结后会自动保存在本机（最多 ${History.MAX_ENTRIES} 条 / ${History.formatBytes(
+          History.MAX_TOTAL_BYTES,
+        )}）。刷新页面、关闭标签页后仍可在这里回看和导出。`,
+      });
+      return;
+    }
+    hideEmpty(state.refs.historyEmpty);
+    list.hidden = false;
+    const fragment = document.createDocumentFragment();
+    for (const item of state.historyItems) fragment.appendChild(historyRow(item));
+    list.appendChild(fragment);
+  }
+
+  async function onHistoryAction(action, key) {
+    if (!key) return;
+    if (action === 'load') {
+      await loadHistoryEntry(key);
+      return;
+    }
+    if (action === 'export-md' || action === 'export-txt') {
+      try {
+        const entry = await History.readEntry(key);
+        if (!entry) {
+          showToast('这条历史已不存在', 'error');
+          refreshHistory();
+          return;
+        }
+        exportHistoryEntry(entry, action === 'export-md' ? 'md' : 'txt');
+      } catch (error) {
+        showToast(error.message || '导出失败', 'error');
+      }
+      return;
+    }
+    if (action === 'delete') {
+      if (!window.confirm('删除这条历史总结？删除后只能重新生成。')) return;
+      try {
+        const response = await sendRuntimeMessage({ type: 'HISTORY_DELETE', key }, 12000);
+        if (!response || !response.ok) throw new Error((response && response.error) || '删除失败');
+        showToast('已删除这条历史');
+        await refreshHistory();
+        if (state.historyKey === key && state.summaryFromHistory && state.refs.aiStatus) {
+          setStatus(state.refs.aiStatus, '这条总结的历史记录已删除，当前内容仍保留在页面上。', 'warn');
+        }
+      } catch (error) {
+        showToast(error.message || '删除失败', 'error');
+      }
+    }
+  }
+
+  async function clearAllHistory() {
+    if (!state.historyItems.length) return;
+    if (!window.confirm(`清空全部 ${state.historyItems.length} 条历史总结？此操作无法撤销。`)) return;
+    try {
+      const response = await sendRuntimeMessage({ type: 'HISTORY_CLEAR' }, 15000);
+      if (!response || !response.ok) throw new Error((response && response.error) || '清空失败');
+      setStatus(state.refs.historyStatus, '历史已清空。', 'success');
+      await refreshHistory();
+    } catch (error) {
+      setStatus(state.refs.historyStatus, error.message || '清空失败', 'error');
+    }
+  }
+
+  function videoFromEntry(entry) {
+    return {
+      title: entry.title || 'Bilibili 视频',
+      baseTitle: entry.title || 'Bilibili 视频',
+      partTitle: '',
+      owner: entry.owner || '',
+      duration: Number(entry.duration) || 0,
+      url: entry.url || '',
+      bvid: entry.bvid || '',
+      cid: Number(entry.cid) || 0,
+      aid: 0,
+      cover: '',
+      pageNo: Number(entry.pageNo) || 1,
+      pageCount: Number(entry.pageCount) || 1,
+      isBangumi: false,
+    };
+  }
+
+  /**
+   * Put one stored record back into the panel: video header, subtitle snapshot
+   * (so SRT/TXT export still works), summary body and its metadata.
+   */
+  function applyHistoryEntry(entry, options) {
+    if (!entry || typeof entry.summary !== 'string' || !entry.summary) return false;
+    const opts = options || {};
+    const entryVideo = videoFromEntry(entry);
+    const sameVideo =
+      Boolean(state.video && entryVideo.bvid) &&
+      String(state.video.bvid || '').toUpperCase() === String(entryVideo.bvid).toUpperCase() &&
+      Number(state.video.pageNo || 1) === Number(entryVideo.pageNo || 1);
+
+    if (!sameVideo && (!state.video || opts.replace)) {
+      state.video = entryVideo;
+      state.tracks = [];
+      state.trackMap = new Map();
+      state.selectedTrackKey = '';
+      renderVideo(state.video);
+      renderTrackSelect();
+    }
+
+    const snapshot =
+      entry.subtitle && Array.isArray(entry.subtitle.segments) ? entry.subtitle.segments : [];
+    if (snapshot.length && (!state.segments.length || (!sameVideo && opts.replace))) {
+      state.segments = snapshot.map((segment) => ({
+        from: Number(segment.from) || 0,
+        to: Number(segment.to) || 0,
+        content: String(segment.content || ''),
+      }));
+      state.loaded = true;
+      renderSegments();
+      updateTabCount();
+      updateSubtitleButtons();
+      if (entry.subtitle.truncated) {
+        setStatus(state.refs.subStatus, '历史字幕快照过长，只保存了前一部分，导出内容不完整。', 'warn');
+      } else if (!state.tracks.length) {
+        setStatus(state.refs.subStatus, '字幕来自本地历史快照，可正常导出。', 'warn');
+      }
+    } else if (!sameVideo && opts.replace) {
+      // Switching to another video's history must not leave the previous
+      // video's subtitles under the new title.
+      state.segments = [];
+      renderSegments();
+      updateSubtitleButtons();
+      showSubtitleEmpty({
+        icon: 'subtitles',
+        title: '这条历史没有字幕快照',
+        desc: '只保存了总结正文，可以直接在「AI 总结」里查看和导出。',
+      });
+    }
+
+    state.summary = entry.summary;
+    const generated = entry.generatedAt || entry.savedAt;
+    state.summaryGeneratedAt = generated ? new Date(generated) : new Date();
+    if (Number.isNaN(state.summaryGeneratedAt.getTime())) state.summaryGeneratedAt = new Date();
+    const stats = entry.stats && typeof entry.stats === 'object' ? entry.stats : {};
+    state.summaryStats = {
+      chunks: Number(stats.chunks) || 0,
+      calls: Number(stats.calls) || 0,
+      usage: {
+        promptTokens: Number(stats.promptTokens) || 0,
+        completionTokens: Number(stats.completionTokens) || 0,
+        totalTokens: Number(stats.totalTokens) || 0,
+      },
+      subtitleCount: Number(stats.subtitleCount) || Number(entry.subtitle && entry.subtitle.count) || 0,
+    };
+    state.summaryStyle = entry.style || state.summaryStyle;
+    state.summaryFromHistory = true;
+    state.aiError = '';
+    state.historyKey = entry.key;
+
+    if (state.refs.summary) {
+      state.refs.summary.innerHTML = U.renderMarkdown(state.summary);
+      state.refs.summary.hidden = false;
+      state.refs.summary.scrollTop = 0;
+    }
+    if (state.refs.summaryMeta) {
+      const pieces = [
+        '来自本地历史',
+        `生成于 ${U.formatLocalDateTime(state.summaryGeneratedAt)}`,
+        entry.model || '',
+        state.summaryStats.chunks ? `${state.summaryStats.chunks} 个分段` : '',
+      ].filter(Boolean);
+      state.refs.summaryMeta.textContent = pieces.join(' · ');
+      state.refs.summaryMeta.hidden = false;
+    }
+    if (state.refs.progress) state.refs.progress.hidden = true;
+    hideEmpty(state.refs.aiEmpty);
+    setStatus(
+      state.refs.aiStatus,
+      `已恢复 ${U.formatLocalDateTime(
+        state.summaryGeneratedAt,
+      )} 保存的总结，可直接导出；重新生成会覆盖这条历史。`,
+      'success',
+    );
+    updateStylePicker();
+    updateAiCopy();
+    updateAiButtons();
+    if (state.activeTab === 'history') refreshHistory();
+    return true;
+  }
+
+  function exportHistoryEntry(entry, type) {
+    const summary = String(entry.summary || '');
+    if (!summary) {
+      showToast('这条历史没有可导出的总结', 'error');
+      return;
+    }
+    const video = videoFromEntry(entry);
+    const generatedAt = U.formatLocalDateTime(
+      entry.generatedAt ? new Date(entry.generatedAt) : new Date(entry.savedAt || Date.now()),
+    );
+    if (type === 'md') {
+      const content = U.summaryToMarkdown({
+        video,
+        summary,
+        generatedAt,
+        includeHeader: state.settings.includeHeader,
+      });
+      const filename = U.buildFilename(video.title, 'AI总结', 'md');
+      downloadText(filename, content, 'text/markdown', false);
+      showToast(`已导出 ${filename}`);
+      return;
+    }
+    const content = U.summaryToTxt({
+      video,
+      summary,
+      generatedAt,
+      includeHeader: state.settings.includeHeader,
+    });
+    const filename = U.buildFilename(video.title, 'AI总结', 'txt');
+    downloadText(filename, content, 'text/plain', true);
+    showToast(`已导出 ${filename}`);
+  }
+
+  async function loadHistoryEntry(key) {
+    if (state.summaryLoading) abortSummary(true);
+    try {
+      const entry = await History.readEntry(key);
+      if (!entry) {
+        showToast('这条历史已不存在', 'error');
+        await refreshHistory();
+        return;
+      }
+      applyHistoryEntry(entry, { replace: true });
+      switchTab('ai');
+      showToast('已载入历史总结');
+    } catch (error) {
+      showToast(error.message || '载入历史失败', 'error');
+    }
+  }
+
+  /** Fallback key when the video API failed but the URL still names the video. */
+  function keyFromRoute() {
+    const route = state.route || U.parseBilibiliRoute(location.href);
+    if (!route || route.kind !== 'video' || !route.bvid) return '';
+    const page = Math.max(1, Math.floor(Number(route.page) || 1));
+    return History.entryKey({ bvid: route.bvid, pageNo: page, pageCount: page > 1 ? page : 1 });
+  }
+
+  /**
+   * Restore the saved summary for the current video after a refresh, or fall
+   * back to it when Bilibili returns no subtitles. Never overwrites a summary
+   * that is already on screen unless `replace` is requested.
+   */
+  async function restoreFromHistory(options) {
+    const opts = options || {};
+    if (state.historyRestoring || state.summaryLoading) return false;
+    if (state.summary && !opts.replace) return false;
+    const key = state.historyKey || keyFromRoute();
+    if (!key) return false;
+    state.historyRestoring = true;
+    try {
+      const entry = await History.readEntry(key);
+      if (!entry) return false;
+      const applied = applyHistoryEntry(entry, { replace: Boolean(opts.replace) });
+      if (applied) {
+        refreshHistory();
+        if (opts.reason === 'offline') {
+          setStatus(
+            state.refs.subStatus,
+            '在线字幕不可用，已恢复本地保存的字幕快照与总结。',
+            'warn',
+          );
+        }
+      }
+      return applied;
+    } catch (_) {
+      return false;
+    } finally {
+      state.historyRestoring = false;
     }
   }
 
@@ -1919,9 +2394,14 @@
 
   if (chrome.storage && chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== 'local' || !changes[Settings.SETTINGS_KEY]) return;
-      state.settings = Settings.normalizeSettings(changes[Settings.SETTINGS_KEY].newValue);
-      if (state.open) refreshAiStatus(true);
+      if (areaName !== 'local') return;
+      if (changes[Settings.SETTINGS_KEY]) {
+        state.settings = Settings.normalizeSettings(changes[Settings.SETTINGS_KEY].newValue);
+        if (state.open) refreshAiStatus(true);
+      }
+      // Another tab (or the background save) changed the history: keep the
+      // badge and the list in sync without polling.
+      if (changes[History.HISTORY_KEY] && state.host) refreshHistory();
     });
   }
 
