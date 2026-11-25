@@ -22,6 +22,7 @@
     language: document.getElementById('language'),
     style: document.getElementById('style'),
     styleHints: document.getElementById('styleHints'),
+    thinking: document.getElementById('thinking'),
     chunkChars: document.getElementById('chunkChars'),
     chunkOutput: document.getElementById('chunkOutput'),
     customPrompt: document.getElementById('customPrompt'),
@@ -202,6 +203,13 @@
     }
   }
 
+  function renderThinkingSelect() {
+    els.thinking.replaceChildren();
+    for (const level of Settings.THINKING_LEVELS) {
+      els.thinking.appendChild(new Option(level.label, level.value));
+    }
+  }
+
   function renderStyleHints() {
     els.styleHints.replaceChildren();
     for (const style of Settings.STYLES) {
@@ -245,6 +253,7 @@
       model: els.model.value,
       language: els.language.value,
       style: els.style.value,
+      thinking: els.thinking.value,
       chunkChars: Number(els.chunkChars.value),
       customPrompt: els.customPrompt.value,
       txtTimestamps: els.txtTimestamps.checked,
@@ -258,6 +267,7 @@
     els.model.value = settings.model;
     els.language.value = settings.language;
     els.style.value = settings.style;
+    els.thinking.value = settings.thinking;
     els.chunkChars.value = String(settings.chunkChars);
     els.customPrompt.value = settings.customPrompt;
     els.txtTimestamps.checked = settings.txtTimestamps;
@@ -498,6 +508,7 @@
   async function init() {
     renderPresets();
     renderStyleSelect();
+    renderThinkingSelect();
     renderStyleHints();
     els.style.addEventListener('change', syncStyleHints);
     els.chunkChars.addEventListener('input', updateChunkOutput);

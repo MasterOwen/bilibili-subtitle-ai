@@ -21,6 +21,7 @@
     model: 'deepseek-flash',
     language: 'zh',
     style: 'structured',
+    thinking: 'auto',
     chunkChars: 7000,
     customPrompt: '',
     txtTimestamps: false,
@@ -85,6 +86,17 @@
   ]);
 
   /**
+   * Reasoning budget. "auto" sends nothing and keeps the provider default;
+   * the other levels are translated per provider in background/ai.js and are
+   * silently dropped when an endpoint rejects the parameter.
+   */
+  const THINKING_LEVELS = Object.freeze([
+    { value: 'auto', label: '跟随模型默认', hint: '不发送推理参数，由服务商和模型决定' },
+    { value: 'low', label: '低', hint: '尽量降低推理量，响应更快；部分服务商不支持' },
+    { value: 'off', label: '关闭（尽量）', hint: '尽量关闭深度思考；推理模型通常无法完全关闭' },
+  ]);
+
+  /**
    * API keys are stored per API host so switching providers does not carry one
    * provider's key over to another. Hostnames are the same key used by the
    * host permission patterns.
@@ -114,6 +126,7 @@
     const chunk = Number(pick('chunkChars'));
     const styleValue = String(pick('style') || DEFAULTS.style);
     const languageValue = String(pick('language') || DEFAULTS.language);
+    const thinkingValue = String(pick('thinking') || DEFAULTS.thinking);
     return {
       apiBaseUrl: String(pick('apiBaseUrl') || '').trim().replace(/\/+$/, ''),
       apiKey: String(pick('apiKey') || '').trim(),
@@ -121,6 +134,9 @@
       model: String(pick('model') || '').trim(),
       language: LANGUAGES.some((item) => item.value === languageValue) ? languageValue : DEFAULTS.language,
       style: STYLES.some((item) => item.value === styleValue) ? styleValue : DEFAULTS.style,
+      thinking: THINKING_LEVELS.some((item) => item.value === thinkingValue)
+        ? thinkingValue
+        : DEFAULTS.thinking,
       chunkChars: Number.isFinite(chunk) ? Math.min(30000, Math.max(3000, Math.round(chunk / 500) * 500)) : DEFAULTS.chunkChars,
       customPrompt: String(pick('customPrompt') || '').trim().slice(0, 1500),
       txtTimestamps: Boolean(pick('txtTimestamps')),
@@ -220,6 +236,7 @@
     PRESETS,
     STYLES,
     LANGUAGES,
+    THINKING_LEVELS,
     normalizeSettings,
     loadSettings,
     saveSettings,

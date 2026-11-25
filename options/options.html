@@ -102,6 +102,13 @@
 
           <div class="style-hints" id="styleHints"></div>
 
+          <label class="field">
+            <span class="field-label">深度思考</span>
+            <!-- 选项由 options.js 按 shared/settings.js 的 THINKING_LEVELS 渲染。 -->
+            <select id="thinking"></select>
+            <span class="field-hint">逐字稿等长文本更容易触发超时。调到「低」或「关闭」能明显加快响应、减少超时；接口不支持该参数时会自动忽略，按模型默认执行。</span>
+          </label>
+
           <label class="field field-range">
             <span class="field-label">分段长度 <output id="chunkOutput">7000 字</output></span>
             <input id="chunkChars" type="range" min="3000" max="30000" step="500" value="7000" />

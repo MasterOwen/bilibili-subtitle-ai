@@ -368,22 +368,40 @@ ${notes}${customRequirement(config)}`,
     return `AI 请求失败（${status}）${suffix}`;
   }
 
+  /**
+   * Abort when the caller aborts or when no activity happens for `timeoutMs`.
+   * Streaming calls call `touch()` on every decoded chunk, so a slow model that
+   * keeps producing tokens is never killed by total wall-clock time.
+   */
   function combinedSignal(signal, timeoutMs) {
     const controller = new AbortController();
     let timedOut = false;
+    let timer = null;
+    let disposed = false;
     const onAbort = () => controller.abort();
+
+    function arm() {
+      if (disposed) return;
+      clearTimeout(timer);
+      if (!(timeoutMs > 0)) return;
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+    }
+
     if (signal) {
       if (signal.aborted) controller.abort();
       else signal.addEventListener('abort', onAbort, { once: true });
     }
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, timeoutMs);
+    arm();
+
     return {
       signal: controller.signal,
       didTimeout: () => timedOut,
+      touch: arm,
       cleanup: () => {
+        disposed = true;
         clearTimeout(timer);
         if (signal) signal.removeEventListener('abort', onAbort);
       },
@@ -476,7 +494,7 @@ ${notes}${customRequirement(config)}`,
     return reasoningFromDelta(choice);
   }
 
-  async function readStreamResponse(response, opts, totalUsage) {
+  async function readStreamResponse(response, opts, totalUsage, touch) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -526,6 +544,7 @@ ${notes}${customRequirement(config)}`,
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (typeof touch === 'function') touch();
         buffer += decoder.decode(value, { stream: true });
         let newline;
         while ((newline = buffer.indexOf('\n')) >= 0) {
@@ -545,6 +564,35 @@ ${notes}${customRequirement(config)}`,
     }
 
     return { content: content.trim(), usage: totalUsage, raw: null, finishReason, reasoning: reasoning.trim() };
+  }
+
+  /**
+   * Optional reasoning-effort control. Providers disagree on the field name, so
+   * one shape is chosen for the configured endpoint; callChat drops it and
+   * retries when the endpoint rejects the parameter.
+   */
+  function thinkingBody(config) {
+    const level = String((config && config.thinking) || 'auto').toLowerCase();
+    if (!level || level === 'auto') return null;
+    let host = '';
+    try {
+      host = new URL(root.BiliSubSettings.buildChatCompletionsUrl(config.apiBaseUrl)).hostname.toLowerCase();
+    } catch (_) {
+      return null;
+    }
+    const model = String(config.model || '').toLowerCase();
+    const off = level === 'off';
+    if (host === 'openrouter.ai' || host.endsWith('.openrouter.ai')) {
+      return off ? { reasoning: { enabled: false } } : { reasoning: { effort: 'low' } };
+    }
+    if (host === 'open.bigmodel.cn' || host.endsWith('.bigmodel.cn')) {
+      // Zhipu exposes on/off only, so "low" keeps the provider default.
+      return off ? { thinking: { type: 'disabled' } } : null;
+    }
+    if (host.endsWith('siliconflow.cn') || host.endsWith('siliconflow.com') || /qwen|qwq/.test(model)) {
+      return off ? { enable_thinking: false } : { enable_thinking: true, thinking_budget: 1024 };
+    }
+    return off ? { reasoning_effort: 'minimal' } : { reasoning_effort: 'low' };
   }
 
   async function callChat(options) {
@@ -569,6 +617,9 @@ ${notes}${customRequirement(config)}`,
       max_tokens: opts.maxTokens,
       stream: Boolean(opts.stream),
     };
+    const thinking = thinkingBody(config);
+    const thinkingKeys = thinking ? Object.keys(thinking) : [];
+    if (thinking) Object.assign(requestDefaults, thinking);
 
     for (let attempt = 0; attempt <= opts.retries; attempt += 1) {
       throwIfAborted(opts.signal);
@@ -639,6 +690,16 @@ ${notes}${customRequirement(config)}`,
               delete requestDefaults.temperature;
               continue;
             }
+            const rejectedThinking = thinkingKeys.filter((key) => text.includes(key));
+            if (
+              rejectedThinking.length &&
+              /(unsupported|not supported|unknown|unrecognized|invalid|unexpected)/i.test(text)
+            ) {
+              // Not every OpenAI-compatible endpoint accepts reasoning params;
+              // fall back to the provider default instead of failing the run.
+              for (const key of rejectedThinking) delete requestDefaults[key];
+              continue;
+            }
           }
           throw error;
         }
@@ -648,7 +709,7 @@ ${notes}${customRequirement(config)}`,
             ? String(response.headers.get('content-type') || '')
             : '';
         if (opts.stream && response.body && /text\/event-stream/i.test(contentType)) {
-          return await readStreamResponse(response, opts, totalUsage);
+          return await readStreamResponse(response, opts, totalUsage, linked.touch);
         }
 
         const text = await response.text();
@@ -677,7 +738,9 @@ ${notes}${customRequirement(config)}`,
         const aborted = error && error.name === 'AbortError';
         if (aborted) {
           if (linked.didTimeout() && !(opts.signal && opts.signal.aborted)) {
-            lastError = new Error('AI 服务响应超时，请稍后重试或换用更快的模型');
+            lastError = new Error(
+              'AI 服务响应超时。可在设置页把「深度思考」调低、减小分段长度，或换用更快的模型。',
+            );
             lastError.code = 'TIMEOUT';
           } else {
             throw abortError();
@@ -785,7 +848,35 @@ ${notes}${customRequirement(config)}`,
     };
   }
 
-  async function summarizeChunk(video, chunk, partLabel, config, sessionId, signal, streamOpts, depth) {
+  const MIN_CHUNK_TIMEOUT_MS = 180000;
+  const MAX_CHUNK_TIMEOUT_MS = 300000;
+  /** A verbatim chunk emits about one token per source character. */
+  const TRANSCRIPT_CHUNK_CHARS = 4000;
+
+  /**
+   * A verbatim chunk can emit nearly as many tokens as it reads, and reasoning
+   * models add invisible tokens on top. Scale the per-chunk deadline with the
+   * chunk size instead of using one flat 3-minute budget for every request.
+   */
+  function chunkTimeoutMs(chars, override) {
+    const forced = Number(override);
+    if (Number.isFinite(forced) && forced > 0) return forced;
+    const scaled = 90000 + (Number(chars) || 0) * 35;
+    return Math.min(MAX_CHUNK_TIMEOUT_MS, Math.max(MIN_CHUNK_TIMEOUT_MS, Math.round(scaled)));
+  }
+
+  async function summarizeChunk(
+    video,
+    chunk,
+    partLabel,
+    config,
+    sessionId,
+    signal,
+    streamOpts,
+    depth,
+    timeoutOverride,
+  ) {
+    const chunkChars = (chunk.text || '').length;
     try {
       const messages = isTranscriptStyle(config)
         ? transcriptChunkMessages(video, chunk, 0, 1, config, partLabel)
@@ -796,16 +887,19 @@ ${notes}${customRequirement(config)}`,
             config,
             messages,
             sessionId,
-            timeoutMs: 180000,
+            timeoutMs: chunkTimeoutMs(chunkChars, timeoutOverride),
             retries: 2,
             signal,
           },
           streamOpts,
         ),
-        budgetsForChars((chunk.text || '').length, 3000),
+        budgetsForChars(chunkChars, 3000),
       );
     } catch (error) {
-      if (error.code === 'OUTPUT_TRUNCATED' && depth < 3) {
+      // A slow model can miss the deadline on a long chunk; halving it is a
+      // faster cure than retrying the same oversized request.
+      const splittable = error.code === 'OUTPUT_TRUNCATED' || error.code === 'TIMEOUT';
+      if (splittable && depth < 3) {
         const halves = splitChunkText(chunk);
         if (halves) {
           const left = await summarizeChunk(
@@ -817,6 +911,7 @@ ${notes}${customRequirement(config)}`,
             signal,
             streamOpts,
             depth + 1,
+            timeoutOverride,
           );
           const right = await summarizeChunk(
             video,
@@ -827,6 +922,7 @@ ${notes}${customRequirement(config)}`,
             signal,
             streamOpts,
             depth + 1,
+            timeoutOverride,
           );
           return {
             content: `${left.content}\n\n${right.content}`,
@@ -847,6 +943,7 @@ ${notes}${customRequirement(config)}`,
     const onProgress = options.onProgress;
     const onDelta = options.onDelta;
     const transcriptStyle = isTranscriptStyle(config);
+    const timeoutOverride = Number(options.chunkTimeoutMs) || 0;
     if (!segments.length) throw new Error('当前没有可总结的字幕');
 
     function streamOptions(phase, current, total) {
@@ -859,8 +956,16 @@ ${notes}${customRequirement(config)}`,
       };
     }
 
-    const chunks = U.chunkSegments(segments, config.chunkChars || 7000);
-    if (!chunks.length) throw new Error(transcriptStyle ? '字幕内容为空，无法生成逐字稿' : '字幕内容为空，无法总结');
+    const configuredChunk = Number(config.chunkChars) || 7000;
+    // Verbatim output is about as long as its input, so use smaller chunks than
+    // a summary would need; that keeps every request inside its deadline.
+    const chunkLimit = transcriptStyle
+      ? Math.min(configuredChunk, TRANSCRIPT_CHUNK_CHARS)
+      : configuredChunk;
+    const chunks = U.chunkSegments(segments, chunkLimit);
+    if (!chunks.length) {
+      throw new Error(transcriptStyle ? '字幕内容为空，无法生成逐字稿' : '字幕内容为空，无法总结');
+    }
 
     // One conversation = one stable session, shared by every map/reduce/final
     // request so OpenCode Go can route and cache it consistently.
@@ -887,7 +992,9 @@ ${notes}${customRequirement(config)}`,
           config,
           messages: directMessages(video, chunks[0].text, config),
           sessionId,
-          timeoutMs: 240000,
+          timeoutMs: transcriptStyle
+            ? chunkTimeoutMs((chunks[0].text || '').length, timeoutOverride)
+            : 240000,
           retries: 2,
           signal,
           ...streamOptions('final', 1, 1),
@@ -920,6 +1027,7 @@ ${notes}${customRequirement(config)}`,
             signal,
             streamOptions('map', index + 1, chunks.length),
             0,
+            timeoutOverride,
           );
         } catch (error) {
           throw new Error(

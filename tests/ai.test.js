@@ -621,6 +621,163 @@ test('buildManualPrompt follows the selected transcript style', () => {
   assert.doesNotMatch(prompt, /## 一句话概括/);
 });
 
+test('callChat maps the thinking level to provider-specific parameters', async () => {
+  const bodies = [];
+  globalThis.fetch = async (url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
+  };
+  async function call(overrides) {
+    await AI.callChat({
+      config: config(overrides),
+      messages: [{ role: 'user', content: 'ping' }],
+      retries: 0,
+    });
+  }
+
+  await call({ thinking: 'low' });
+  await call({ thinking: 'off' });
+  await call({ thinking: 'auto' });
+  await call({ apiBaseUrl: 'https://openrouter.ai/api/v1', thinking: 'low' });
+  await call({ apiBaseUrl: 'https://openrouter.ai/api/v1', thinking: 'off' });
+  await call({ apiBaseUrl: 'https://open.bigmodel.cn/api/paas/v4', thinking: 'off' });
+  await call({ apiBaseUrl: 'https://api.siliconflow.cn/v1', thinking: 'off' });
+
+  assert.equal(bodies[0].reasoning_effort, 'low');
+  assert.equal(bodies[1].reasoning_effort, 'minimal');
+  assert.equal(bodies[2].reasoning_effort, undefined);
+  assert.equal(bodies[2].reasoning, undefined);
+  assert.deepEqual(bodies[3].reasoning, { effort: 'low' });
+  assert.deepEqual(bodies[4].reasoning, { enabled: false });
+  assert.deepEqual(bodies[5].thinking, { type: 'disabled' });
+  assert.equal(bodies[6].enable_thinking, false);
+});
+
+test('callChat drops a thinking parameter the endpoint rejects', async () => {
+  const bodies = [];
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    if ('reasoning_effort' in body) {
+      return jsonResponse({ error: { message: "Unknown parameter: 'reasoning_effort'" } }, 400);
+    }
+    return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
+  };
+
+  const result = await AI.callChat({
+    config: config({ thinking: 'low' }),
+    messages: [{ role: 'user', content: 'ping' }],
+    retries: 1,
+  });
+
+  assert.equal(result.content, 'ok');
+  assert.equal(bodies.length, 2);
+  assert.equal('reasoning_effort' in bodies[1], false);
+});
+
+test('callChat resets the deadline while stream deltas keep arriving', async () => {
+  const encoder = new TextEncoder();
+  globalThis.fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          let index = 0;
+          const timer = setInterval(() => {
+            if (index >= 5) {
+              clearInterval(timer);
+              controller.close();
+              return;
+            }
+            const payload = JSON.stringify({ choices: [{ delta: { content: `段${index}` } }] });
+            controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+            index += 1;
+          }, 80);
+        },
+      }),
+      { headers: { 'content-type': 'text/event-stream; charset=utf-8' } },
+    );
+
+  const result = await AI.callChat({
+    config: config(),
+    messages: [{ role: 'user', content: 'ping' }],
+    stream: true,
+    timeoutMs: 180,
+    retries: 0,
+  });
+
+  // The whole stream takes ~400ms, well past the 180ms deadline: only the
+  // idle-based reset can complete it.
+  assert.equal(result.content, '段0段1段2段3段4');
+});
+
+test('summarizeVideo splits a chunk that times out instead of failing the run', async () => {
+  const segments = [];
+  for (let i = 0; i < 40; i += 1) {
+    segments.push({
+      from: i * 2,
+      to: i * 2 + 1,
+      content: '这条字幕比较长，用来把单个分段撑到超时阈值以上，从而验证超时后的对半拆分。',
+    });
+  }
+  let timeouts = 0;
+  let successes = 0;
+  globalThis.fetch = async (url, init) => {
+    const user = JSON.parse(init.body).messages[1].content;
+    const body = user.slice(user.lastIndexOf('字幕：') + 3);
+    if (body.length > 800) {
+      timeouts += 1;
+      return new Promise((resolve, reject) => {
+        init.signal.addEventListener('abort', () => {
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
+      });
+    }
+    successes += 1;
+    return jsonResponse({ choices: [{ message: { content: `[OK ${body.length}]` } }] });
+  };
+
+  const result = await AI.summarizeVideo({
+    video: { title: '超时拆分', duration: 120 },
+    segments,
+    config: config({ style: 'transcript', chunkChars: 1000 }),
+    chunkTimeoutMs: 150,
+  });
+
+  assert.ok(timeouts >= 1, 'the oversized request should time out once');
+  assert.ok(successes >= 2, 'halves should succeed after the timeout');
+  assert.match(result.summary, /\[OK \d+\]/);
+  assert.ok(result.stats.chunks >= 2);
+});
+
+test('summarizeVideo caps transcript chunks so one request cannot get huge', async () => {
+  const segments = [];
+  for (let i = 0; i < 120; i += 1) {
+    segments.push({
+      from: i * 2,
+      to: i * 2 + 1,
+      content: '这条字幕用于验证逐字稿的分段上限，需要足够长才能撑出多个分段。',
+    });
+  }
+  let maxBody = 0;
+  globalThis.fetch = async (url, init) => {
+    const user = JSON.parse(init.body).messages[1].content;
+    const body = user.slice(user.lastIndexOf('字幕：') + 3);
+    maxBody = Math.max(maxBody, body.length);
+    return jsonResponse({ choices: [{ message: { content: `[OK ${body.length}]` } }] });
+  };
+
+  const result = await AI.summarizeVideo({
+    video: { title: '逐字稿上限', duration: 240 },
+    segments,
+    config: config({ style: 'transcript', chunkChars: 30000 }),
+  });
+
+  assert.ok(result.stats.chunks >= 2, `expected split chunks, got ${result.stats.chunks}`);
+  assert.ok(maxBody <= 4200, `transcript chunk too large: ${maxBody}`);
+});
+
 test('OpenCode Go requests share one stable session header', async () => {
   const seen = [];
   globalThis.fetch = async (url, init) => {

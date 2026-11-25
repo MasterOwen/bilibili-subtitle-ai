@@ -50,6 +50,16 @@ test('offers every summary style, including the transcript style', () => {
   assert.equal(Settings.normalizeSettings({ style: 'nope' }).style, 'structured');
 });
 
+test('normalizes the reasoning level', () => {
+  assert.equal(Settings.normalizeSettings({ thinking: 'low' }).thinking, 'low');
+  assert.equal(Settings.normalizeSettings({ thinking: 'off' }).thinking, 'off');
+  assert.equal(Settings.normalizeSettings({ thinking: 'nope' }).thinking, 'auto');
+  assert.equal(Settings.normalizeSettings({}).thinking, 'auto');
+  for (const level of Settings.THINKING_LEVELS) {
+    assert.equal(Settings.normalizeSettings({ thinking: level.value }).thinking, level.value);
+  }
+});
+
 test('builds Chat Completions URLs from common base URLs', () => {
   assert.equal(
     Settings.buildChatCompletionsUrl('https://api.deepseek.com/v1'),
