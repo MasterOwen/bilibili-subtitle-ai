@@ -556,6 +556,8 @@ test('summarizeVideo writes a transcript in one request for a short video', asyn
   assert.match(captured, /口播逐字稿/);
   assert.match(captured, /对吧/);
   assert.match(captured, /不要概括/);
+  assert.match(captured, /100-250 字/);
+  assert.doesNotMatch(captured, /3-8 个自然段/);
   assert.doesNotMatch(captured, /信息笔记/);
   assert.equal(result.stats.calls, 1);
   assert.equal(result.stats.chunks, 1);
@@ -614,6 +616,34 @@ test('summarizeVideo never condenses a long transcript', async () => {
   assert.ok(first >= 0 && second > first, 'chunks must stay in subtitle order');
 });
 
+test('summarizeVideo splits an over-long transcript paragraph without rewriting it', async () => {
+  const sentences = [];
+  for (let i = 0; i < 24; i += 1) {
+    sentences.push(`第${i + 1}句话说了一个完整的意思，大概二十多个字。`);
+  }
+  const wallOfText = sentences.join('');
+  globalThis.fetch = async () =>
+    jsonResponse({ choices: [{ message: { content: wallOfText }, finish_reason: 'stop' }] });
+
+  const result = await AI.summarizeVideo({
+    video: { title: '分段测试' },
+    segments: [{ from: 1, to: 2, content: '一句字幕' }],
+    config: config({ style: 'transcript', chunkChars: 3000 }),
+  });
+
+  const paragraphs = result.summary
+    .replace(/^逐字稿：\n+/, '')
+    .split(/\n{2,}/)
+    .filter(Boolean);
+  assert.ok(paragraphs.length >= 2, `expected several paragraphs, got ${paragraphs.length}`);
+  assert.ok(
+    paragraphs.every((paragraph) => paragraph.length <= 300),
+    `paragraph too long: ${Math.max(...paragraphs.map((p) => p.length))}`,
+  );
+  // Nothing may be lost or reordered by the split.
+  assert.equal(paragraphs.join(''), wallOfText);
+});
+
 test('buildManualPrompt follows the selected transcript style', () => {
   const prompt = AI.buildManualPrompt({
     video: { title: '手动逐字稿' },
@@ -626,6 +656,7 @@ test('buildManualPrompt follows the selected transcript style', () => {
   assert.match(prompt, /口播逐字稿/);
   assert.match(prompt, /不要概括/);
   assert.match(prompt, /口语/);
+  assert.match(prompt, /100-250 字/);
   assert.doesNotMatch(prompt, /## 一句话概括/);
 });
 
