@@ -369,37 +369,40 @@ ${notes}${customRequirement(config)}`,
   }
 
   /**
-   * Abort when the caller aborts or when no activity happens for `timeoutMs`.
-   * Streaming calls call `touch()` on every decoded chunk, so a slow model that
-   * keeps producing tokens is never killed by total wall-clock time.
+   * Abort when the caller aborts, when no byte arrives within `firstByteMs`, or
+   * when a live stream goes silent for `idleMs`. A timeout is only a stall
+   * detector: a model that keeps emitting tokens is never cut off by total
+   * elapsed time.
    */
-  function combinedSignal(signal, timeoutMs) {
+  function combinedSignal(signal, firstByteMs, idleMs) {
     const controller = new AbortController();
     let timedOut = false;
     let timer = null;
     let disposed = false;
     const onAbort = () => controller.abort();
 
-    function arm() {
+    function arm(ms) {
       if (disposed) return;
       clearTimeout(timer);
-      if (!(timeoutMs > 0)) return;
+      if (!(ms > 0)) return;
       timer = setTimeout(() => {
         timedOut = true;
         controller.abort();
-      }, timeoutMs);
+      }, ms);
     }
 
     if (signal) {
       if (signal.aborted) controller.abort();
       else signal.addEventListener('abort', onAbort, { once: true });
     }
-    arm();
+    arm(firstByteMs);
 
     return {
       signal: controller.signal,
       didTimeout: () => timedOut,
-      touch: arm,
+      // Any decoded chunk proves the connection is alive; after the first one
+      // the deadline only guards against a stalled stream.
+      touch: () => arm(idleMs > 0 ? idleMs : firstByteMs),
       cleanup: () => {
         disposed = true;
         clearTimeout(timer);
@@ -631,7 +634,11 @@ ${notes}${customRequirement(config)}`,
         }
       }
       const body = Object.assign({}, requestDefaults);
-      const linked = combinedSignal(opts.signal, opts.timeoutMs);
+      const linked = combinedSignal(
+        opts.signal,
+        opts.timeoutMs,
+        opts.stream ? opts.idleTimeoutMs || STREAM_IDLE_TIMEOUT_MS : 0,
+      );
       try {
         const response = await fetch(url, {
           method: 'POST',
@@ -850,13 +857,16 @@ ${notes}${customRequirement(config)}`,
 
   const MIN_CHUNK_TIMEOUT_MS = 180000;
   const MAX_CHUNK_TIMEOUT_MS = 300000;
+  /** A streaming answer that goes silent this long is treated as stalled. */
+  const STREAM_IDLE_TIMEOUT_MS = 180000;
   /** A verbatim chunk emits about one token per source character. */
   const TRANSCRIPT_CHUNK_CHARS = 4000;
 
   /**
-   * A verbatim chunk can emit nearly as many tokens as it reads, and reasoning
-   * models add invisible tokens on top. Scale the per-chunk deadline with the
-   * chunk size instead of using one flat 3-minute budget for every request.
+   * Time allowed before the first byte of a chunk comes back (long reasoning
+   * can legitimately stay silent for a while) and, for non-streaming calls, the
+   * whole request. A verbatim chunk can emit nearly as many tokens as it reads,
+   * so the budget scales with chunk size instead of being flat.
    */
   function chunkTimeoutMs(chars, override) {
     const forced = Number(override);

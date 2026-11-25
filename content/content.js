@@ -1461,11 +1461,11 @@
       state.summaryPort = null;
       if (state.refs.progress) state.refs.progress.hidden = true;
       resetAiStream();
-      state.aiError = 'AI 响应超时，请检查网络或换用更快的模型后重试。';
+      state.aiError = 'AI 长时间没有任何返回，已停止等待。可调低「深度思考」、减小分段长度，或换用更快的模型后重试。';
       setStatus(state.refs.aiStatus, state.aiError, 'error');
       renderAiEmpty();
       updateAiButtons();
-    }, 300000);
+    }, 420000);
   }
 
   function startSummaryHeartbeat(port) {

@@ -675,6 +675,31 @@ test('callChat drops a thinking parameter the endpoint rejects', async () => {
   assert.equal('reasoning_effort' in bodies[1], false);
 });
 
+test('callChat reports a timeout when a stream never sends its first token', async () => {
+  const started = Date.now();
+  globalThis.fetch = async (url, init) =>
+    new Promise((resolve, reject) => {
+      init.signal.addEventListener('abort', () => {
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        reject(error);
+      });
+    });
+
+  await assert.rejects(
+    () =>
+      AI.callChat({
+        config: config(),
+        messages: [{ role: 'user', content: 'ping' }],
+        stream: true,
+        timeoutMs: 120,
+        retries: 0,
+      }),
+    /响应超时/,
+  );
+  assert.ok(Date.now() - started < 5000, 'the deadline must fire promptly');
+});
+
 test('callChat resets the deadline while stream deltas keep arriving', async () => {
   const encoder = new TextEncoder();
   globalThis.fetch = async () =>
