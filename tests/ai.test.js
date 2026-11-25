@@ -535,7 +535,9 @@ test('summarizeVideo writes a transcript in one request for a short video', asyn
     return jsonResponse({
       choices: [
         {
-          message: { content: '## 逐字稿\n\n[00:01] 大家好，这是整理后的逐字稿。' },
+          message: {
+            content: '逐字稿：\n\n大家好，呃，今天我们聊怎么把字幕整理成逐字稿，对吧？',
+          },
           finish_reason: 'stop',
         },
       ],
@@ -551,12 +553,16 @@ test('summarizeVideo writes a transcript in one request for a short video', asyn
     config: config({ style: 'transcript', chunkChars: 3000 }),
   });
 
-  assert.match(captured, /逐字稿/);
+  assert.match(captured, /口播逐字稿/);
+  assert.match(captured, /对吧/);
   assert.match(captured, /不要概括/);
   assert.doesNotMatch(captured, /信息笔记/);
   assert.equal(result.stats.calls, 1);
   assert.equal(result.stats.chunks, 1);
-  assert.match(result.summary, /## 逐字稿/);
+  // The model repeated the prefix; exactly one is kept.
+  assert.ok(result.summary.startsWith('逐字稿：'));
+  assert.equal(result.summary.match(/逐字稿：/g).length, 1);
+  assert.match(result.summary, /今天我们聊怎么把字幕整理成逐字稿/);
 });
 
 test('summarizeVideo never condenses a long transcript', async () => {
@@ -602,6 +608,7 @@ test('summarizeVideo never condenses a long transcript', async () => {
   assert.ok(prompts.every((prompt) => !prompt.includes('分段笔记')));
   assert.ok(prompts.every((prompt) => !prompt.includes('整合成一份完整')));
   assert.match(result.summary, /### \d{2}:\d{2}–\d{2}:\d{2}/);
+  assert.ok(result.summary.startsWith('逐字稿：'));
   const first = result.summary.indexOf('第一段的逐字稿正文');
   const second = result.summary.indexOf('第二段的逐字稿正文');
   assert.ok(first >= 0 && second > first, 'chunks must stay in subtitle order');
@@ -616,8 +623,9 @@ test('buildManualPrompt follows the selected transcript style', () => {
     ],
     config: config({ style: 'transcript' }),
   });
-  assert.match(prompt, /逐字稿/);
+  assert.match(prompt, /口播逐字稿/);
   assert.match(prompt, /不要概括/);
+  assert.match(prompt, /口语/);
   assert.doesNotMatch(prompt, /## 一句话概括/);
 });
 
