@@ -71,6 +71,11 @@
     { value: 'brief', label: '精简要点', hint: '3-5 句概括 + 高密度要点，适合快速了解' },
     { value: 'notes', label: '详细笔记', hint: '按主题展开，保留解释、例子和步骤' },
     { value: 'study', label: '学习提纲', hint: '概念、框架、重点难点与复习问题' },
+    {
+      value: 'transcript',
+      label: '逐字稿',
+      hint: '按原话整理全文：去语气词、补标点、分段，保留时间点',
+    },
   ]);
 
   const LANGUAGES = Object.freeze([

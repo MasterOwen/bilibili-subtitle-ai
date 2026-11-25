@@ -699,13 +699,14 @@
     const video = opts.video || {};
     const title = video.title || '视频总结';
     const includeHeader = opts.includeHeader !== false;
+    const label = opts.label || 'AI 总结';
     const summary = normalizeSummaryMarkdown(opts.summary || '');
     if (!includeHeader) return `${summary}\n`;
     const lines = [`# ${title}`, ''];
     lines.push(`> 视频：[${markdownLinkText(title)}](${video.url || '#'})  `);
     const meta = videoMetaLine(video);
     if (meta) lines.push(`> ${meta}  `);
-    if (opts.generatedAt) lines.push(`> AI 总结生成于 ${opts.generatedAt}  `);
+    if (opts.generatedAt) lines.push(`> ${label}生成于 ${opts.generatedAt}  `);
     lines.push('> 内容由 AI 根据视频字幕整理，可能存在误差。', '', '---', '', summary, '');
     return lines.join('\n');
   }
@@ -715,10 +716,11 @@
     const video = opts.video || {};
     const title = video.title || '视频总结';
     const includeHeader = opts.includeHeader !== false;
+    const label = opts.label || 'AI 总结';
     const body = stripMarkdown(normalizeSummaryMarkdown(opts.summary || ''));
     if (!includeHeader) return `${body}\n`;
     const lines = [title, video.url || '', videoMetaLine(video)];
-    if (opts.generatedAt) lines.push(`AI 总结生成于 ${opts.generatedAt}`);
+    if (opts.generatedAt) lines.push(`${label}生成于 ${opts.generatedAt}`);
     lines.push('内容由 AI 根据视频字幕整理，可能存在误差。', '', '='.repeat(48), '', body, '');
     return lines.filter((line, index, arr) => line !== '' || arr[index - 1] !== '').join('\n');
   }

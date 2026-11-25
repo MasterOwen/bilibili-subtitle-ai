@@ -195,6 +195,13 @@
     }
   }
 
+  function renderStyleSelect() {
+    els.style.replaceChildren();
+    for (const style of Settings.STYLES) {
+      els.style.appendChild(new Option(style.label, style.value));
+    }
+  }
+
   function renderStyleHints() {
     els.styleHints.replaceChildren();
     for (const style of Settings.STYLES) {
@@ -490,6 +497,7 @@
 
   async function init() {
     renderPresets();
+    renderStyleSelect();
     renderStyleHints();
     els.style.addEventListener('change', syncStyleHints);
     els.chunkChars.addEventListener('input', updateChunkOutput);

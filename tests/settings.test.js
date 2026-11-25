@@ -37,6 +37,19 @@ test('normalizes and clamps settings', () => {
   assert.equal(settings.includeHeader, false);
 });
 
+test('offers every summary style, including the transcript style', () => {
+  const values = Settings.STYLES.map((item) => item.value);
+  assert.ok(values.includes('structured'));
+  assert.ok(values.includes('transcript'), '逐字稿 must be a selectable style');
+  for (const style of Settings.STYLES) {
+    assert.ok(style.label, `${style.value} needs a label`);
+    assert.ok(style.hint, `${style.value} needs a hint`);
+    assert.equal(Settings.normalizeSettings({ style: style.value }).style, style.value);
+  }
+  assert.equal(Settings.normalizeSettings({ style: 'transcript' }).style, 'transcript');
+  assert.equal(Settings.normalizeSettings({ style: 'nope' }).style, 'structured');
+});
+
 test('builds Chat Completions URLs from common base URLs', () => {
   assert.equal(
     Settings.buildChatCompletionsUrl('https://api.deepseek.com/v1'),

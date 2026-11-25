@@ -15,6 +15,8 @@
       '输出详细、可复习的视频笔记。按主题或时间线分节，保留论点、解释、例子、操作步骤、数据与结论。',
     study:
       '把视频整理成学习提纲。突出概念定义、知识框架、重点难点、方法步骤、例子，并给出复习问题。',
+    transcript:
+      '把字幕整理成可读的逐字稿：保留原话内容与顺序，删掉口头禅、语气词和无意义重复，补全标点并分段；不要概括、不要提炼要点、不要省略内容。',
   };
 
   const FINAL_STRUCTURES = {
@@ -62,7 +64,19 @@
 
 ## 复习问题
 给出 3-5 个能检验理解程度的问题，不要附答案。`,
+    transcript: `## 逐字稿
+按时间顺序输出全文，每个自然段以 [mm:ss] 时间点开头，段与段之间空一行。
+
+不要写概括、要点清单、结论或“以下是逐字稿”之类的开场白；不要省略任何内容。`,
   };
+
+  /**
+   * 逐字稿 is the one style whose deliverable is the subtitle text itself, so it
+   * must never pass through the condensing map-reduce path.
+   */
+  function isTranscriptStyle(config) {
+    return Boolean(config && config.style === 'transcript');
+  }
 
   function abortError(message) {
     const error = new Error(message || '已停止生成');
@@ -172,6 +186,31 @@ ${chunk.text}${customRequirement(config)}`,
     ];
   }
 
+  function transcriptChunkMessages(video, chunk, index, total, config, partLabel) {
+    const label = partLabel || `第 ${index + 1}/${total} 部分`;
+    return [
+      { role: 'system', content: systemPrompt(config) },
+      {
+        role: 'user',
+        content: `${videoHeader(video)}
+
+下面是完整视频字幕的${label}，时间范围约 ${U.formatClock(
+          chunk.from,
+        )}–${U.formatClock(chunk.to)}。
+
+请把这一段字幕整理成逐字稿（不是总结）：
+- 保留这一段全部的信息与顺序，不要概括、不要省略、不要把多句合并成一句；
+- 删掉口头禅、语气词和无意义重复，补全标点；
+- 按语义分成 2-6 个自然段，每段以对应的 \`[mm:ss]\` 时间点开头；
+- 明显同音识别错误可以结合上下文修正，但不要改变原意；
+- 只输出逐字稿正文，不要写“这一段讲了……”之类的说明。
+
+字幕：
+${chunk.text}${customRequirement(config)}`,
+      },
+    ];
+  }
+
   function finalMessages(video, notes, config) {
     const structure = FINAL_STRUCTURES[(config && config.style) || 'structured'] || FINAL_STRUCTURES.structured;
     const partCount = (String(notes || '').match(/### 第 \d+ 段/g) || []).length;
@@ -200,7 +239,27 @@ ${notes}`,
     ];
   }
 
+  function transcriptDirectPrompt(video, transcript, config) {
+    return `${videoHeader(video)}
+
+下面是带时间戳的完整字幕。请把它整理成一份可直接阅读的逐字稿（不是总结，不要缩写内容）。
+
+必须遵守：
+- 保留全部信息与原有顺序，不要概括、不要省略、不要把多句内容合并成一句；
+- 删掉口头禅、语气词和无意义重复，补全标点；
+- 按语义分成自然段，每段开头保留对应的 \`[mm:ss]\` 时间点；
+- 明显同音识别错误可以结合上下文修正，但不要改变原意；
+- 只输出逐字稿正文，不要写开场白、要点清单或结论，不要用代码块包裹。
+
+建议结构：
+${FINAL_STRUCTURES.transcript}${customRequirement(config)}
+
+字幕：
+${transcript}`;
+  }
+
   function directPrompt(video, transcript, config) {
+    if (isTranscriptStyle(config)) return transcriptDirectPrompt(video, transcript, config);
     const structure = FINAL_STRUCTURES[(config && config.style) || 'structured'] || FINAL_STRUCTURES.structured;
     return `${videoHeader(video)}
 
@@ -728,11 +787,14 @@ ${notes}${customRequirement(config)}`,
 
   async function summarizeChunk(video, chunk, partLabel, config, sessionId, signal, streamOpts, depth) {
     try {
+      const messages = isTranscriptStyle(config)
+        ? transcriptChunkMessages(video, chunk, 0, 1, config, partLabel)
+        : chunkMessages(video, chunk, 0, 1, config, partLabel);
       return await callChatWithBudgets(
         Object.assign(
           {
             config,
-            messages: chunkMessages(video, chunk, 0, 1, config, partLabel),
+            messages,
             sessionId,
             timeoutMs: 180000,
             retries: 2,
@@ -784,6 +846,7 @@ ${notes}${customRequirement(config)}`,
     const signal = options.signal;
     const onProgress = options.onProgress;
     const onDelta = options.onDelta;
+    const transcriptStyle = isTranscriptStyle(config);
     if (!segments.length) throw new Error('当前没有可总结的字幕');
 
     function streamOptions(phase, current, total) {
@@ -797,7 +860,7 @@ ${notes}${customRequirement(config)}`,
     }
 
     const chunks = U.chunkSegments(segments, config.chunkChars || 7000);
-    if (!chunks.length) throw new Error('字幕内容为空，无法总结');
+    if (!chunks.length) throw new Error(transcriptStyle ? '字幕内容为空，无法生成逐字稿' : '字幕内容为空，无法总结');
 
     // One conversation = one stable session, shared by every map/reduce/final
     // request so OpenCode Go can route and cache it consistently.
@@ -817,7 +880,7 @@ ${notes}${customRequirement(config)}`,
         phase: 'final',
         current: 1,
         total: 1,
-        message: '正在通读字幕并生成总结…',
+        message: transcriptStyle ? '正在通读字幕，整理逐字稿…' : '正在通读字幕并生成总结…',
       });
       const response = await callChatWithBudgets(
         {
@@ -835,14 +898,16 @@ ${notes}${customRequirement(config)}`,
       addUsage(response.usage);
       summary = response.content;
     } else {
-      const notes = [];
+      const chunkOutputs = [];
       for (let index = 0; index < chunks.length; index += 1) {
         throwIfAborted(signal);
         report(onProgress, {
           phase: 'map',
           current: index + 1,
           total: chunks.length,
-          message: `正在提炼第 ${index + 1}/${chunks.length} 段字幕…`,
+          message: transcriptStyle
+            ? `正在整理第 ${index + 1}/${chunks.length} 段逐字稿…`
+            : `正在提炼第 ${index + 1}/${chunks.length} 段字幕…`,
         });
         let response;
         try {
@@ -857,82 +922,106 @@ ${notes}${customRequirement(config)}`,
             0,
           );
         } catch (error) {
-          throw new Error(`第 ${index + 1}/${chunks.length} 段字幕提炼失败：${error.message}`);
+          throw new Error(
+            transcriptStyle
+              ? `第 ${index + 1}/${chunks.length} 段逐字稿整理失败：${error.message}`
+              : `第 ${index + 1}/${chunks.length} 段字幕提炼失败：${error.message}`,
+          );
         }
         calls += 1;
         addUsage(response.usage);
-        notes.push(
-          `### 第 ${index + 1} 段（${U.formatClock(chunks[index].from)}–${U.formatClock(
-            chunks[index].to,
-          )}）\n${response.content}`,
+        chunkOutputs.push(response.content);
+      }
+      if (!chunkOutputs.length) {
+        throw new Error(
+          transcriptStyle ? 'AI 没有返回有效的逐字稿内容，请重试' : 'AI 没有返回有效的分段笔记，请重试',
         );
       }
-      if (!notes.length) throw new Error('AI 没有返回有效的分段笔记，请重试');
-      if (notes.length !== chunks.length) {
-        throw new Error('分段笔记数量与字幕分段不一致，请重试');
+      if (chunkOutputs.length !== chunks.length) {
+        throw new Error(
+          transcriptStyle ? '逐字稿段落数量与字幕分段不一致，请重试' : '分段笔记数量与字幕分段不一致，请重试',
+        );
       }
 
-      let round = 0;
-      while (notes.join('\n\n').length > 24000 && notes.length > 1) {
-        round += 1;
-        report(onProgress, {
-          phase: 'reduce',
-          current: round,
-          total: round,
-          message: `正在合并第 ${round} 轮分段笔记…`,
-        });
-        const merged = [];
-        for (let index = 0; index < notes.length; index += 2) {
-          const group = notes.slice(index, index + 2).join('\n\n');
-          let response;
-          try {
-            response = await callChatWithBudgets(
-              {
-                config,
-                messages: mergeMessages(video, group, config),
-                sessionId,
-                timeoutMs: 180000,
-                retries: 2,
-                signal,
-                ...streamOptions('reduce', round, round),
-              },
-              budgetsForChars(group.length, 3000),
-            );
-          } catch (error) {
-            throw new Error(`合并第 ${Math.floor(index / 2) + 1} 组分段笔记失败：${error.message}`);
+      if (transcriptStyle) {
+        // The concatenation already is the deliverable: no reduce, no condensing
+        // final pass, which would silently shorten the transcript.
+        summary = chunkOutputs
+          .map(
+            (text, index) =>
+              `### ${U.formatClock(chunks[index].from)}–${U.formatClock(chunks[index].to)}\n\n${text}`,
+          )
+          .join('\n\n');
+      } else {
+        const notes = chunkOutputs.map(
+          (text, index) =>
+            `### 第 ${index + 1} 段（${U.formatClock(chunks[index].from)}–${U.formatClock(
+              chunks[index].to,
+            )}）\n${text}`,
+        );
+
+        let round = 0;
+        while (notes.join('\n\n').length > 24000 && notes.length > 1) {
+          round += 1;
+          report(onProgress, {
+            phase: 'reduce',
+            current: round,
+            total: round,
+            message: `正在合并第 ${round} 轮分段笔记…`,
+          });
+          const merged = [];
+          for (let index = 0; index < notes.length; index += 2) {
+            const group = notes.slice(index, index + 2).join('\n\n');
+            let response;
+            try {
+              response = await callChatWithBudgets(
+                {
+                  config,
+                  messages: mergeMessages(video, group, config),
+                  sessionId,
+                  timeoutMs: 180000,
+                  retries: 2,
+                  signal,
+                  ...streamOptions('reduce', round, round),
+                },
+                budgetsForChars(group.length, 3000),
+              );
+            } catch (error) {
+              throw new Error(`合并第 ${Math.floor(index / 2) + 1} 组分段笔记失败：${error.message}`);
+            }
+            calls += 1;
+            addUsage(response.usage);
+            merged.push(response.content);
           }
-          calls += 1;
-          addUsage(response.usage);
-          merged.push(response.content);
+          if (!merged.length || merged.length !== Math.ceil(notes.length / 2)) {
+            throw new Error('AI 合并分段笔记失败，请重试');
+          }
+          notes.splice(0, notes.length, ...merged);
         }
-        if (!merged.length || merged.length !== Math.ceil(notes.length / 2)) {
-          throw new Error('AI 合并分段笔记失败，请重试');
-        }
-        notes.splice(0, notes.length, ...merged);
-      }
 
-      throwIfAborted(signal);
-      report(onProgress, {
-        phase: 'final',
-        current: 1,
-        total: 1,
-        message: '正在整合全篇，生成最终总结…',
-      });
-      const response = await callChatWithBudgets(
-        {
-          config,
-          messages: finalMessages(video, notes.join('\n\n'), config),
-          sessionId,
-          timeoutMs: 240000,
-          retries: 2,
-          signal,
-          ...streamOptions('final', 1, 1),
-        },
-        budgetsForChars(notes.join('\n\n').length, 5000),
-      );
-      calls += 1;
-      addUsage(response.usage);
-      summary = response.content;
+        throwIfAborted(signal);
+        report(onProgress, {
+          phase: 'final',
+          current: 1,
+          total: 1,
+          message: '正在整合全篇，生成最终总结…',
+        });
+        const response = await callChatWithBudgets(
+          {
+            config,
+            messages: finalMessages(video, notes.join('\n\n'), config),
+            sessionId,
+            timeoutMs: 240000,
+            retries: 2,
+            signal,
+            ...streamOptions('final', 1, 1),
+          },
+          budgetsForChars(notes.join('\n\n').length, 5000),
+        );
+        calls += 1;
+        addUsage(response.usage);
+        summary = response.content;
+      }
     }
 
     const normalized = U.normalizeSummaryMarkdown(summary);

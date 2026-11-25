@@ -527,6 +527,100 @@ test('summarizeVideo fails instead of silently dropping an empty chunk note', as
   assert.equal(mapCalls, 3);
 });
 
+test('summarizeVideo writes a transcript in one request for a short video', async () => {
+  let captured = '';
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    captured += `${body.messages[0].content}\n${body.messages[1].content}\n`;
+    return jsonResponse({
+      choices: [
+        {
+          message: { content: '## 逐字稿\n\n[00:01] 大家好，这是整理后的逐字稿。' },
+          finish_reason: 'stop',
+        },
+      ],
+    });
+  };
+
+  const result = await AI.summarizeVideo({
+    video: { title: '逐字稿测试', duration: 60, owner: 'UP' },
+    segments: [
+      { from: 1, to: 3, content: '嗯，大家好，那我们现在开始。' },
+      { from: 3, to: 6, content: '今天讲的是字幕整理。' },
+    ],
+    config: config({ style: 'transcript', chunkChars: 3000 }),
+  });
+
+  assert.match(captured, /逐字稿/);
+  assert.match(captured, /不要概括/);
+  assert.doesNotMatch(captured, /信息笔记/);
+  assert.equal(result.stats.calls, 1);
+  assert.equal(result.stats.chunks, 1);
+  assert.match(result.summary, /## 逐字稿/);
+});
+
+test('summarizeVideo never condenses a long transcript', async () => {
+  const segments = [];
+  for (let i = 0; i < 120; i += 1) {
+    segments.push({
+      from: i * 2,
+      to: i * 2 + 1,
+      content: `第${i + 1}句：这一段字幕用来测试逐字稿是否按顺序完整保留，不能被合并或概括。`,
+    });
+  }
+  const prompts = [];
+  let chunkCalls = 0;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const user = body.messages[1].content;
+    prompts.push(user);
+    if (user.includes('整理成逐字稿')) {
+      chunkCalls += 1;
+      const part = user.includes('第 1/2 部分') ? '一' : '二';
+      return jsonResponse({
+        choices: [
+          {
+            message: { content: `[00:00] 第${part}段的逐字稿正文。` },
+            finish_reason: 'stop',
+          },
+        ],
+      });
+    }
+    throw new Error(`unexpected prompt: ${user.slice(0, 40)}`);
+  };
+
+  const result = await AI.summarizeVideo({
+    video: { title: '长逐字稿', duration: 240, owner: 'UP' },
+    segments,
+    config: config({ style: 'transcript', chunkChars: 3000 }),
+  });
+
+  assert.equal(result.stats.chunks, 2);
+  assert.equal(chunkCalls, 2);
+  assert.equal(result.stats.calls, 2);
+  assert.equal(prompts.length, 2, 'transcript must not add merge/final requests');
+  assert.ok(prompts.every((prompt) => !prompt.includes('分段笔记')));
+  assert.ok(prompts.every((prompt) => !prompt.includes('整合成一份完整')));
+  assert.match(result.summary, /### \d{2}:\d{2}–\d{2}:\d{2}/);
+  const first = result.summary.indexOf('第一段的逐字稿正文');
+  const second = result.summary.indexOf('第二段的逐字稿正文');
+  assert.ok(first >= 0 && second > first, 'chunks must stay in subtitle order');
+});
+
+test('buildManualPrompt follows the selected transcript style', () => {
+  const prompt = AI.buildManualPrompt({
+    video: { title: '手动逐字稿' },
+    segments: [
+      { from: 1, to: 2, content: '第一句字幕' },
+      { from: 3, to: 4, content: '第二句字幕' },
+    ],
+    config: config({ style: 'transcript' }),
+  });
+  assert.match(prompt, /逐字稿/);
+  assert.match(prompt, /不要概括/);
+  assert.doesNotMatch(prompt, /## 一句话概括/);
+});
+
 test('OpenCode Go requests share one stable session header', async () => {
   const seen = [];
   globalThis.fetch = async (url, init) => {

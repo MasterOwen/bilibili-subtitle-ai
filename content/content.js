@@ -684,6 +684,7 @@
       state.styleSaving = false;
       updateStylePicker();
       updateAiCopy();
+      renderAiEmpty();
     }
   }
 
@@ -698,11 +699,13 @@
         refs.aiHint.textContent = `已加载 ${state.segments.length} 条字幕。当前偏好：${styleLabel}；配置 AI 服务可直接生成，也可以复制提示词到其他网页 AI。`;
       }
     } else {
-      refs.aiHint.textContent = '先加载字幕，再生成总结。';
+      refs.aiHint.textContent =
+        currentSummaryStyle() === 'transcript' ? '先加载字幕，再生成逐字稿。' : '先加载字幕，再生成总结。';
     }
     if (refs.summarizeLabel) {
+      const verb = currentSummaryStyle() === 'transcript' ? '逐字稿' : '总结';
       if (state.summaryLoading) refs.summarizeLabel.textContent = '正在生成…';
-      else refs.summarizeLabel.textContent = state.summary ? '重新生成' : '生成总结';
+      else refs.summarizeLabel.textContent = state.summary ? '重新生成' : `生成${verb}`;
     }
   }
 
@@ -1279,7 +1282,7 @@
       setEmpty(empty, {
         icon: 'subtitles',
         title: '还没有字幕',
-        desc: '先在「字幕」标签页加载当前视频的字幕，AI 才能进行总结。',
+        desc: '先在「字幕」标签页加载当前视频的字幕，AI 才能进行总结或整理逐字稿。',
       });
       return;
     }
@@ -1307,10 +1310,13 @@
       });
       return;
     }
+    const transcript = currentSummaryStyle() === 'transcript';
     setEmpty(empty, {
       icon: 'sparkles',
-      title: '生成一份视频总结',
-      desc: `将使用 ${state.aiStatus.model || 'AI'} 分析 ${state.segments.length} 条字幕，生成可导出的 Markdown 总结；也可以复制提示词到其他网页 AI。`,
+      title: transcript ? '整理一份逐字稿' : '生成一份视频总结',
+      desc: `将使用 ${state.aiStatus.model || 'AI'} 分析 ${state.segments.length} 条字幕，整理成可导出的 Markdown ${
+        transcript ? '逐字稿（保留原话与时间点，不做概括）' : '总结'
+      }；也可以复制提示词到其他网页 AI。`,
       actions: [
         { label: '开始生成', act: 'generate', icon: 'sparkles', primary: true },
         { label: '复制提示词', act: 'copy-prompt', icon: 'copy' },
@@ -1373,7 +1379,9 @@
     if (!delta || typeof delta !== 'object') return;
     const phase = delta.phase;
     if (phase === 'map') {
-      state.streamPhase = `第 ${delta.current || 1}/${delta.total || 1} 段 · 正在提炼信息笔记`;
+      const verb =
+        currentSummaryStyle() === 'transcript' ? '正在整理逐字稿' : '正在提炼信息笔记';
+      state.streamPhase = `第 ${delta.current || 1}/${delta.total || 1} 段 · ${verb}`;
     } else if (phase === 'reduce') {
       state.streamPhase = `正在合并分段笔记 · 第 ${delta.current || 1} 轮`;
     } else if (phase === 'final') {
@@ -1868,7 +1876,7 @@
       setEmpty(state.refs.historyEmpty, {
         icon: 'clock',
         title: '还没有历史总结',
-        desc: `生成总结后会自动保存在本机（最多 ${History.MAX_ENTRIES} 条 / ${History.formatBytes(
+        desc: `生成总结或逐字稿后会自动保存在本机（最多 ${History.MAX_ENTRIES} 条 / ${History.formatBytes(
           History.MAX_TOTAL_BYTES,
         )}）。刷新页面、关闭标签页后仍可在这里回看和导出。`,
       });
@@ -2061,14 +2069,18 @@
     const generatedAt = U.formatLocalDateTime(
       entry.generatedAt ? new Date(entry.generatedAt) : new Date(entry.savedAt || Date.now()),
     );
+    const isTranscript = entry.style === 'transcript';
+    const suffix = isTranscript ? '逐字稿' : 'AI总结';
+    const label = isTranscript ? '逐字稿' : 'AI 总结';
     if (type === 'md') {
       const content = U.summaryToMarkdown({
         video,
         summary,
         generatedAt,
         includeHeader: state.settings.includeHeader,
+        label,
       });
-      const filename = U.buildFilename(video.title, 'AI总结', 'md');
+      const filename = U.buildFilename(video.title, suffix, 'md');
       downloadText(filename, content, 'text/markdown', false);
       showToast(`已导出 ${filename}`);
       return;
@@ -2078,8 +2090,9 @@
       summary,
       generatedAt,
       includeHeader: state.settings.includeHeader,
+      label,
     });
-    const filename = U.buildFilename(video.title, 'AI总结', 'txt');
+    const filename = U.buildFilename(video.title, suffix, 'txt');
     downloadText(filename, content, 'text/plain', true);
     showToast(`已导出 ${filename}`);
   }
@@ -2198,14 +2211,18 @@
     const generatedAt = state.summaryGeneratedAt
       ? U.formatLocalDateTime(state.summaryGeneratedAt)
       : U.formatLocalDateTime(new Date());
+    const isTranscript = currentSummaryStyle() === 'transcript';
+    const suffix = isTranscript ? '逐字稿' : 'AI总结';
+    const label = isTranscript ? '逐字稿' : 'AI 总结';
     if (type === 'md') {
       const content = U.summaryToMarkdown({
         video: state.video || {},
         summary: state.summary,
         generatedAt,
         includeHeader: state.settings.includeHeader,
+        label,
       });
-      const filename = U.buildFilename(title, 'AI总结', 'md');
+      const filename = U.buildFilename(title, suffix, 'md');
       downloadText(filename, content, 'text/markdown', false);
       showToast(`已导出 ${filename}`);
       return;
@@ -2215,8 +2232,9 @@
       summary: state.summary,
       generatedAt,
       includeHeader: state.settings.includeHeader,
+      label,
     });
-    const filename = U.buildFilename(title, 'AI总结', 'txt');
+    const filename = U.buildFilename(title, suffix, 'txt');
     downloadText(filename, content, 'text/plain', true);
     showToast(`已导出 ${filename}`);
   }
