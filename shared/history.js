@@ -1,11 +1,13 @@
 /*
- * Local summary history: one record per played video / part, keyed by bvid.
+ * Local summary history: one record per finished generation, grouped by video.
  *
  * Records live in chrome.storage.local under HISTORY_KEY and are capped by both
  * entry count and an estimated byte budget, so a long-lived install can never
- * push the extension over the storage quota. Writes are owned by the service
- * worker (serialized through one promise queue); content scripts only read, so
- * a page can never race a save that is already running.
+ * push the extension over the storage quota. Every generation of the same video
+ * is kept (no overwrite); `key` groups records for one playable unit and `id`
+ * identifies one specific record. Writes are owned by the service worker
+ * (serialized through one promise queue); content scripts only read, so a page
+ * can never race a save that is already running.
  */
 (function (root, factory) {
   const api = factory();
@@ -18,7 +20,7 @@
   'use strict';
 
   const HISTORY_KEY = 'summaryHistory';
-  const STORE_VERSION = 1;
+  const STORE_VERSION = 2;
 
   // chrome.storage.local allows 10 MB by default; keep history well below it so
   // settings, per-host API keys and future data always fit.
@@ -33,6 +35,7 @@
   const MAX_SUMMARY_CHARS = 40000;
 
   const MAX_KEY = 90;
+  const MAX_ID = 160;
   const MAX_TEXT = 500;
   const PREVIEW_CHARS = 180;
 
@@ -161,11 +164,19 @@
 
     const snapshot = snapshotSegments(opts.segments);
     const now = new Date();
-    const generatedAt = isoOrEmpty(opts.generatedAt) || now.toISOString();
+    const savedAt = now.toISOString();
+    const generatedAt = isoOrEmpty(opts.generatedAt) || savedAt;
     const stats = normalizeStats(meta.stats);
+    // One record per generation: the id must stay unique even when the same
+    // video is summarized twice within the same millisecond.
+    const id = clampString(
+      `${key}@${savedAt}@${Math.random().toString(36).slice(2, 7)}`,
+      MAX_ID,
+    );
 
     const entry = {
       version: STORE_VERSION,
+      id,
       key,
       bvid: clampString(video.bvid, 30),
       cid: Math.floor(toNumber(video.cid)),
@@ -178,7 +189,7 @@
       summary,
       summaryChars: summary.length,
       generatedAt,
-      savedAt: now.toISOString(),
+      savedAt,
       model: clampString(meta.model, 200),
       style: clampString(meta.style, 40) || 'structured',
       language: clampString(meta.language, 20) || 'zh',
@@ -234,7 +245,7 @@
       const tooMany = kept.length >= maxEntries;
       const tooBig = kept.length > 0 && bytes + size > maxBytes;
       if (tooMany || tooBig) {
-        evicted.push(entry.key);
+        evicted.push(entry.id || entry.key);
         continue;
       }
       kept.push(entry);
@@ -243,10 +254,13 @@
     return { entries: kept, evicted, bytes };
   }
 
-  /** Insert or replace one entry, then apply both caps. */
-  function upsertEntry(entries, entry, limits) {
+  /**
+   * Add one record and apply both caps. Records are keyed by `id`, so repeated
+   * generations of the same video coexist; nothing is overwritten.
+   */
+  function appendEntry(entries, entry, limits) {
     const rest = (Array.isArray(entries) ? entries : []).filter(
-      (item) => item && item.key && (!entry || item.key !== entry.key),
+      (item) => item && item.key && (!entry || item.id !== entry.id),
     );
     return pruneEntries(entry ? [entry].concat(rest) : rest, limits);
   }
@@ -258,6 +272,7 @@
     const summary = typeof entry.summary === 'string' ? entry.summary : '';
     const segments = Array.isArray(subtitle.segments) ? subtitle.segments : [];
     return {
+      id: clampString(entry.id, MAX_ID),
       key: clampString(entry.key, MAX_KEY),
       bvid: clampString(entry.bvid, 30),
       cid: Math.floor(toNumber(entry.cid)),
@@ -289,29 +304,38 @@
    */
   function normalizeStore(raw) {
     const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-    const byKey = new Map();
+    const byId = new Map();
     for (const item of Array.isArray(input.entries) ? input.entries : []) {
       if (!item || typeof item !== 'object') continue;
       const key = clampString(item.key, MAX_KEY);
       const summary = typeof item.summary === 'string' ? item.summary : '';
       if (!key || !summary) continue;
       const subtitle = item.subtitle && typeof item.subtitle === 'object' ? item.subtitle : {};
+      const savedAt = isoOrEmpty(item.savedAt);
       const entry = Object.assign({}, item, {
         key,
         summary: summary.slice(0, MAX_SUMMARY_CHARS),
         title: clampString(item.title, MAX_TEXT) || 'Bilibili 视频',
-        savedAt: isoOrEmpty(item.savedAt),
+        savedAt,
         generatedAt: isoOrEmpty(item.generatedAt),
         subtitle: Object.assign({}, subtitle, {
           segments: Array.isArray(subtitle.segments) ? subtitle.segments.slice(0, MAX_SUBTITLE_SEGMENTS) : [],
           truncated: Boolean(subtitle.truncated),
         }),
       });
+      // v1 stored one record per video key and had no id; derive a stable one so
+      // old installs keep working (and can still be deleted) after the upgrade.
+      // A repeated id means the very same record, so keep only the newer copy.
+      entry.id =
+        clampString(item.id, MAX_ID) || clampString(`${key}@${savedAt || '0'}`, MAX_ID);
       entry.bytes = entrySize(entry);
-      const existing = byKey.get(key);
-      if (!existing || bySavedAtDesc(entry, existing) < 0) byKey.set(key, entry);
+      const existing = byId.get(entry.id);
+      if (!existing || bySavedAtDesc(entry, existing) < 0) byId.set(entry.id, entry);
     }
-    return { version: STORE_VERSION, entries: Array.from(byKey.values()) };
+    return {
+      version: STORE_VERSION,
+      entries: Array.from(byId.values()).sort(bySavedAtDesc),
+    };
   }
 
   function formatBytes(bytes) {
@@ -395,24 +419,36 @@
     };
   }
 
-  async function readEntry(key) {
+  /** One specific record by id (falls back to the newest record of a key). */
+  async function readEntry(idOrKey) {
+    const wanted = clampString(idOrKey, MAX_ID);
+    if (!wanted) return null;
+    const store = await readStore();
+    const byId = store.entries.find((entry) => entry.id === wanted);
+    if (byId) return byId;
+    const matches = store.entries.filter((entry) => entry.key === wanted);
+    return matches.length ? matches[0] : null;
+  }
+
+  /** Newest record of one video/part, used for automatic restore. */
+  async function latestEntry(key) {
     const wanted = clampString(key, MAX_KEY);
     if (!wanted) return null;
     const store = await readStore();
-    return store.entries.find((entry) => entry.key === wanted) || null;
+    const matches = store.entries.filter((entry) => entry.key === wanted);
+    return matches.length ? matches[0] : null;
   }
 
   /**
-   * Save one entry, replacing any previous record for the same key. On a quota
-   * error it retries once with only the new entry kept, so a full disk still
-   * records the summary the user just paid for.
+   * Save one record. Every generation is kept; a quota error retries once with
+   * only the new record, so a full disk still stores what the user paid for.
    */
-  async function upsertHistory(entry, limits) {
-    if (!entry || !entry.key) throw new Error('历史记录不完整');
+  async function appendHistory(entry, limits) {
+    if (!entry || !entry.key || !entry.id) throw new Error('历史记录不完整');
     return withLock(async () => {
       const resolved = limitsOf(limits);
       const store = await readStore();
-      let pruned = upsertEntry(store.entries, entry, resolved);
+      let pruned = appendEntry(store.entries, entry, resolved);
       try {
         await writeStore(pruned.entries);
         return { entry, evicted: pruned.evicted, totals: totalsFor(pruned, resolved), quotaRetry: false };
@@ -425,7 +461,7 @@
         }
         return {
           entry,
-          evicted: store.entries.map((item) => item.key),
+          evicted: store.entries.map((item) => item.id),
           totals: totalsFor(fallback, resolved),
           quotaRetry: true,
           quotaError: error && error.message ? error.message : '',
@@ -434,12 +470,12 @@
     });
   }
 
-  async function deleteEntry(key) {
-    const wanted = clampString(key, MAX_KEY);
+  async function deleteEntry(id) {
+    const wanted = clampString(id, MAX_ID);
     if (!wanted) return { removed: 0 };
     return withLock(async () => {
       const store = await readStore();
-      const entries = store.entries.filter((entry) => entry.key !== wanted);
+      const entries = store.entries.filter((entry) => entry.id !== wanted);
       await writeStore(entries);
       return { removed: store.entries.length - entries.length };
     });
@@ -460,6 +496,8 @@
     MAX_TOTAL_BYTES,
     MAX_SUBTITLE_CHARS,
     MAX_SUMMARY_CHARS,
+    MAX_KEY,
+    MAX_ID,
     MAX_TEXT,
     PREVIEW_CHARS,
     entryKey,
@@ -470,13 +508,14 @@
     normalizeStore,
     limitsOf,
     pruneEntries,
-    upsertEntry,
+    appendEntry,
     toListItem,
     formatBytes,
     readStore,
     readEntry,
+    latestEntry,
     listHistory,
-    upsertHistory,
+    appendHistory,
     deleteEntry,
     clearHistory,
   };

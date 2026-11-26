@@ -1286,6 +1286,7 @@ textarea {
 }
 
 .bsai-history-usage {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   color: #7c8395;
@@ -1346,6 +1347,67 @@ textarea {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.bsai-history-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.bsai-history-row-head .bsai-history-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.bsai-history-tag {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid rgba(251, 114, 153, 0.36);
+  border-radius: 999px;
+  color: #fb7299;
+  font-size: 8.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+}
+
+.bsai-history-filters {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.bsai-history-filter {
+  height: 22px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #8b92a4;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bsai-history-filter:hover {
+  color: #dfe3ee;
+}
+
+.bsai-history-filter.is-active {
+  background: rgba(251, 114, 153, 0.16);
+  color: #fb7299;
+  font-weight: 600;
+}
+
+.bsai-history-filter:focus-visible {
+  outline: 2px solid rgba(251, 114, 153, 0.75);
+  outline-offset: 1px;
 }
 
 .bsai-history-main:hover .bsai-history-title {

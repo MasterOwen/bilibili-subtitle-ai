@@ -495,9 +495,10 @@ async function saveSummaryHistory(video, segments, settings, result, subtitleMet
       },
     });
     if (!entry) return { saved: false, error: '总结为空，未写入历史', key: History.entryKey(video) };
-    const saved = await History.upsertHistory(entry);
+    const saved = await History.appendHistory(entry);
     return {
       saved: true,
+      id: entry.id,
       key: entry.key,
       count: saved.totals.count,
       bytes: saved.totals.bytes,
@@ -664,7 +665,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.type === 'HISTORY_DELETE') {
-    History.deleteEntry(message.key)
+    History.deleteEntry(message.id)
       .then((result) => sendResponse(Object.assign({ ok: true }, result)))
       .catch((error) => sendResponse(errorResponse(error)));
     return true;

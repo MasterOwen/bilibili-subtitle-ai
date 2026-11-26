@@ -9,8 +9,9 @@ function makeEntry(index, overrides) {
   const day = String(index).padStart(2, '0');
   return Object.assign(
     {
+      id: `id${index}`,
       key: `BVtest${index}`,
-      version: 1,
+      version: History.STORE_VERSION,
       bvid: `BVtest${index}`,
       cid: index,
       pageNo: 1,
@@ -123,13 +124,19 @@ test('builds a complete history entry with metadata and clamps summary length', 
       model: 'deepseek-v4.1-flash',
       style: 'brief',
       language: 'zh',
-      stats: { chunks: 2, calls: 3, usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 }, subtitleCount: 1 },
+      stats: {
+        chunks: 2,
+        calls: 3,
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+        subtitleCount: 1,
+      },
       subtitle: { lan: 'zh-CN', lanDoc: '中文（自动生成）', author: 'A', isAi: true },
     },
   });
 
   assert.ok(entry);
   assert.equal(entry.key, 'BV1xx411c7mD');
+  assert.ok(entry.id.startsWith('BV1xx411c7mD@'), `unexpected id: ${entry.id}`);
   assert.equal(entry.title, '测试视频');
   assert.equal(entry.owner, '测试UP');
   assert.equal(entry.model, 'deepseek-v4.1-flash');
@@ -143,6 +150,10 @@ test('builds a complete history entry with metadata and clamps summary length', 
   assert.equal(entry.subtitle.segments.length, 1);
   assert.equal(entry.appVersion, '1.1.0');
   assert.ok(entry.bytes > 0);
+
+  // Two generations of one video must not share an id.
+  const second = History.buildEntry({ video, summary: '再来一次' });
+  assert.notEqual(second.id, entry.id);
 
   const longSummary = History.buildEntry({ video, summary: 'a'.repeat(History.MAX_SUMMARY_CHARS + 50) });
   assert.equal(longSummary.summary.length, History.MAX_SUMMARY_CHARS);
@@ -163,7 +174,7 @@ test('prunes by entry count, keeping the newest records', () => {
     result.entries.map((entry) => entry.key),
     ['BVtest4', 'BVtest3', 'BVtest2'],
   );
-  assert.deepEqual(result.evicted.sort(), ['BVtest1']);
+  assert.deepEqual(result.evicted.sort(), ['id1']);
   assert.equal(result.bytes, 300);
 });
 
@@ -186,18 +197,26 @@ test('prunes by byte budget but never drops the newest entry', () => {
   assert.equal(defaultLimits.entries.length, 3);
 });
 
-test('upsert replaces the same key and moves it to the front', () => {
-  const existing = [makeEntry(1), makeEntry(2)];
-  const replacement = makeEntry(2, {
-    summary: '新的总结',
-    savedAt: '2026-02-01T00:00:00.000Z',
-    bytes: 120,
+test('keeps every generation of the same video', () => {
+  const first = makeEntry(1, { id: 'gen-1', key: 'BVsame', savedAt: '2026-01-01T00:00:00.000Z' });
+  const second = makeEntry(1, {
+    id: 'gen-2',
+    key: 'BVsame',
+    summary: '第二次生成',
+    savedAt: '2026-01-02T00:00:00.000Z',
   });
-  const result = History.upsertEntry(existing, replacement, { maxEntries: 10, maxBytes: 1024 * 1024 });
-  assert.equal(result.entries.length, 2);
-  assert.equal(result.entries[0].key, 'BVtest2');
-  assert.equal(result.entries[0].summary, '新的总结');
-  assert.equal(result.entries[1].key, 'BVtest1');
+  const limits = { maxEntries: 10, maxBytes: 1024 * 1024 };
+
+  const once = History.appendEntry([first], second, limits);
+  assert.equal(once.entries.length, 2);
+  assert.deepEqual(
+    once.entries.map((entry) => entry.id),
+    ['gen-2', 'gen-1'],
+  );
+
+  // Re-appending the exact same record must not duplicate it.
+  const twice = History.appendEntry(once.entries, second, limits);
+  assert.equal(twice.entries.length, 2);
 });
 
 test('projects list items without the subtitle transcript', () => {
@@ -211,6 +230,7 @@ test('projects list items without the subtitle transcript', () => {
     },
   });
   const item = History.toListItem(entry);
+  assert.equal(item.id, 'id1');
   assert.equal(item.key, 'BVtest1');
   assert.equal(item.subtitleCount, 42);
   assert.equal(item.hasSubtitles, true);
@@ -220,65 +240,93 @@ test('projects list items without the subtitle transcript', () => {
   assert.equal(History.toListItem(null), null);
 });
 
-test('normalizes a corrupt store tolerantly and deduplicates keys', () => {
+test('normalizes a corrupt store, backfills ids and keeps generations', () => {
+  const legacyOld = makeEntry(1, { summary: '旧版本' });
+  delete legacyOld.id;
+  const legacyNew = makeEntry(1, { summary: '较新的版本', savedAt: '2026-03-01T00:00:00.000Z' });
+  delete legacyNew.id;
+  const duplicateA = makeEntry(2, { id: 'dup', summary: '旧' });
+  const duplicateB = makeEntry(2, { id: 'dup', summary: '新', savedAt: '2026-04-01T00:00:00.000Z' });
+
   const store = History.normalizeStore({
     version: 99,
     entries: [
-      makeEntry(1),
-      makeEntry(1, { summary: '较新的版本', savedAt: '2026-03-01T00:00:00.000Z' }),
+      legacyOld,
+      legacyNew,
+      duplicateA,
+      duplicateB,
       { key: '', summary: '没有 key' },
       { key: 'BVnokey' },
       null,
       'garbage',
-      makeEntry(2, { subtitle: null }),
+      makeEntry(3, { subtitle: null }),
     ],
   });
+
   assert.equal(store.version, History.STORE_VERSION);
-  assert.equal(store.entries.length, 2);
-  const first = store.entries.find((entry) => entry.key === 'BVtest1');
-  assert.equal(first.summary, '较新的版本');
-  assert.deepEqual(store.entries.find((entry) => entry.key === 'BVtest2').subtitle.segments, []);
+  const keys = store.entries.map((entry) => entry.key).sort();
+  assert.deepEqual(keys, ['BVtest1', 'BVtest1', 'BVtest2', 'BVtest3']);
+  assert.equal(new Set(store.entries.map((entry) => entry.id)).size, store.entries.length);
+  const generations = store.entries.filter((entry) => entry.key === 'BVtest1');
+  assert.deepEqual(
+    generations.map((entry) => entry.summary),
+    ['较新的版本', '旧版本'],
+  );
+  assert.equal(store.entries.find((entry) => entry.key === 'BVtest2').summary, '新');
+  assert.deepEqual(store.entries.find((entry) => entry.key === 'BVtest3').subtitle.segments, []);
   assert.equal(History.normalizeStore(null).entries.length, 0);
 });
 
 test('round-trips entries through chrome.storage.local', async () => {
   const fake = installChrome();
   try {
-    const entry = History.buildEntry({
-      video: {
-        bvid: 'BV1xx411c7mD',
-        cid: 7,
-        pageNo: 1,
-        pageCount: 1,
-        title: '存储测试',
-        owner: 'UP',
-        duration: 120,
-        url: 'https://www.bilibili.com/video/BV1xx411c7mD',
-      },
+    const video = {
+      bvid: 'BV1xx411c7mD',
+      cid: 7,
+      pageNo: 1,
+      pageCount: 1,
+      title: '存储测试',
+      owner: 'UP',
+      duration: 120,
+      url: 'https://www.bilibili.com/video/BV1xx411c7mD',
+    };
+    const first = History.buildEntry({
+      video,
       segments: [{ from: 0, to: 2, content: '字幕内容' }],
       summary: '## 总结\n正文',
       meta: { model: 'm', style: 'notes', language: 'zh', subtitle: { lan: 'zh-CN', lanDoc: '中文' } },
     });
-    const saved = await History.upsertHistory(entry);
-    assert.equal(saved.totals.count, 1);
-    assert.equal(fake.data[History.HISTORY_KEY].entries.length, 1);
+    const second = History.buildEntry({ video, summary: '第二次生成', generatedAt: new Date() });
 
-    const read = await History.readEntry('BV1xx411c7mD');
-    assert.equal(read.summary, '## 总结\n正文');
-    assert.equal(read.subtitle.segments[0].content, '字幕内容');
-    assert.equal((await History.readEntry('missing')), null);
+    const savedFirst = await History.appendHistory(first);
+    assert.equal(savedFirst.totals.count, 1);
+    const savedSecond = await History.appendHistory(second);
+    assert.equal(savedSecond.totals.count, 2, 'both generations must be stored');
+    assert.equal(fake.data[History.HISTORY_KEY].entries.length, 2);
+
+    const byId = await History.readEntry(first.id);
+    assert.equal(byId.summary, '## 总结\n正文');
+    assert.equal(byId.subtitle.segments[0].content, '字幕内容');
+
+    // Key lookup is the newest generation (auto-restore path).
+    const latest = await History.latestEntry('BV1xx411c7mD');
+    assert.equal(latest.id, second.id);
+    assert.equal((await History.readEntry('BV1xx411c7mD')).id, second.id);
+    assert.equal(await History.readEntry('missing'), null);
+    assert.equal(await History.latestEntry('missing'), null);
 
     const listed = await History.listHistory();
-    assert.equal(listed.items.length, 1);
+    assert.equal(listed.items.length, 2);
     assert.equal(listed.items[0].title, '存储测试');
-    assert.equal(listed.totals.count, 1);
+    assert.equal(listed.items[0].id, second.id);
+    assert.equal(listed.totals.count, 2);
     assert.equal(listed.totals.maxEntries, History.MAX_ENTRIES);
 
-    const removed = await History.deleteEntry('BV1xx411c7mD');
+    const removed = await History.deleteEntry(first.id);
     assert.equal(removed.removed, 1);
-    assert.equal(await History.readEntry('BV1xx411c7mD'), null);
+    assert.equal(await History.readEntry(first.id), null);
+    assert.equal((await History.latestEntry('BV1xx411c7mD')).id, second.id);
 
-    await History.upsertHistory(entry);
     const cleared = await History.clearHistory();
     assert.equal(cleared.removed, 1);
     assert.deepEqual((await History.listHistory()).items, []);
@@ -290,11 +338,11 @@ test('round-trips entries through chrome.storage.local', async () => {
 test('applies caps while saving through the store', async () => {
   installChrome();
   try {
-    await History.upsertHistory(makeEntry(1));
-    await History.upsertHistory(makeEntry(2));
-    const result = await History.upsertHistory(makeEntry(3), { maxEntries: 2 });
+    await History.appendHistory(makeEntry(1));
+    await History.appendHistory(makeEntry(2));
+    const result = await History.appendHistory(makeEntry(3), { maxEntries: 2 });
     assert.equal(result.totals.count, 2);
-    assert.deepEqual(result.evicted, ['BVtest1']);
+    assert.deepEqual(result.evicted, ['id1']);
     const listed = await History.listHistory({ maxEntries: 5 });
     assert.deepEqual(
       listed.items.map((item) => item.key),
@@ -308,9 +356,9 @@ test('applies caps while saving through the store', async () => {
 test('survives a quota error by keeping only the newest summary', async () => {
   const fake = installChrome();
   try {
-    fake.data[History.HISTORY_KEY] = { version: 1, entries: [makeEntry(1)] };
+    fake.data[History.HISTORY_KEY] = { version: History.STORE_VERSION, entries: [makeEntry(1)] };
     fake.state.failWrites = 1;
-    const result = await History.upsertHistory(makeEntry(2));
+    const result = await History.appendHistory(makeEntry(2));
     assert.equal(result.quotaRetry, true);
     const listed = await History.listHistory();
     assert.equal(listed.items.length, 1);
@@ -323,7 +371,7 @@ test('survives a quota error by keeping only the newest summary', async () => {
 test('reports a friendly error when storage keeps rejecting writes', async () => {
   const fake = installChrome({ failWrites: 2 });
   try {
-    await assert.rejects(() => History.upsertHistory(makeEntry(1)), /本地存储空间不足/);
+    await assert.rejects(() => History.appendHistory(makeEntry(1)), /本地存储空间不足/);
     assert.equal(fake.data[History.HISTORY_KEY], undefined);
   } finally {
     uninstallChrome();
@@ -333,8 +381,9 @@ test('reports a friendly error when storage keeps rejecting writes', async () =>
 test('falls back to memory when chrome.storage is unavailable', async () => {
   uninstallChrome();
   const entry = makeEntry(1);
-  const saved = await History.upsertHistory(entry);
+  const saved = await History.appendHistory(entry);
   assert.equal(saved.totals.count, 1);
+  assert.equal((await History.readEntry(entry.id)).summary, '总结 1');
   assert.equal((await History.readEntry('BVtest1')).summary, '总结 1');
   await History.clearHistory();
   assert.deepEqual((await History.listHistory()).items, []);
@@ -346,7 +395,7 @@ test('treats an unreadable store as empty instead of throwing', async () => {
     fake.area.failReads = 1;
     const listed = await History.listHistory();
     assert.deepEqual(listed.items, []);
-    assert.equal((await History.readEntry('BVtest1')), null);
+    assert.equal(await History.readEntry('BVtest1'), null);
   } finally {
     uninstallChrome();
   }

@@ -184,6 +184,10 @@
         <section class="bsai-view" data-view="history" hidden>
           <div class="bsai-history-head">
             <span class="bsai-history-usage" data-el="historyUsage">本机历史</span>
+            <div class="bsai-history-filters" role="group" aria-label="历史范围">
+              <button class="bsai-history-filter is-active" type="button" data-history-filter="all" aria-pressed="true">所有视频</button>
+              <button class="bsai-history-filter" type="button" data-history-filter="current" aria-pressed="false">仅当前视频</button>
+            </div>
             <button class="bsai-btn subtle" type="button" data-act="clear-history" data-el="clearHistory" disabled>清空</button>
           </div>
           <div class="bsai-status" data-el="historyStatus" role="status"></div>
@@ -230,6 +234,7 @@
     historyItems: [],
     historyTotals: null,
     historyKey: '',
+    historyFilter: 'all',
     historyRestoring: false,
     streamText: '',
     streamPhase: '',
@@ -343,9 +348,17 @@
         handleEmptyAction(emptyAction.dataset.emptyAct);
         return;
       }
+      const filterButton = event.target.closest('[data-history-filter]');
+      if (filterButton) {
+        setHistoryFilter(filterButton.dataset.historyFilter);
+        return;
+      }
       const historyAction = event.target.closest('[data-history-act]');
       if (historyAction) {
-        onHistoryAction(historyAction.dataset.historyAct, historyAction.dataset.key);
+        onHistoryAction(historyAction.dataset.historyAct, {
+          id: historyAction.dataset.historyId,
+          key: historyAction.dataset.historyKey,
+        });
       }
     });
   }
@@ -1030,6 +1043,8 @@
       state.loaded = true;
       state.historyKey = state.video ? History.entryKey(state.video) : '';
       if (state.video) renderVideo(state.video);
+      // The filter and the "current video" highlights depend on this key.
+      if (state.refs.historyList) refreshHistory();
 
       if (!state.tracks.length) {
         const fallback = await fetchPlayerTracksFromPage(response.video);
@@ -1771,10 +1786,34 @@
   // ---------------------------------------------------------------------------
   // Summary history (local, bounded)
   // ---------------------------------------------------------------------------
+  /** "仅当前视频" needs a known video key; empty until the page is loaded. */
+  function filteredHistoryItems() {
+    if (state.historyFilter !== 'current') return state.historyItems;
+    if (!state.historyKey) return [];
+    return state.historyItems.filter((item) => item.key === state.historyKey);
+  }
+
+  function setHistoryFilter(value) {
+    const next = value === 'current' ? 'current' : 'all';
+    if (state.historyFilter === next) return;
+    state.historyFilter = next;
+    renderHistory();
+  }
+
+  function syncHistoryFilters() {
+    if (!state.shadow) return;
+    const buttons = state.shadow.querySelectorAll('[data-history-filter]');
+    for (const button of buttons) {
+      const active = button.dataset.historyFilter === state.historyFilter;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    }
+  }
+
   function updateHistoryCount() {
     const badge = state.refs.tabHistoryCount;
     if (!badge) return;
-    const count = state.historyItems.length;
+    const count = filteredHistoryItems().length;
     badge.textContent = count ? String(count) : '';
     badge.hidden = !count;
   }
@@ -1813,27 +1852,40 @@
     button.type = 'button';
     button.className = 'bsai-btn';
     button.dataset.historyAct = action;
-    button.dataset.key = item.key;
+    button.dataset.historyId = item.id;
+    button.dataset.historyKey = item.key;
     button.title = title;
     button.textContent = label;
     return button;
   }
 
   function historyRow(item) {
+    const isCurrent = Boolean(state.historyKey) && item.key === state.historyKey;
     const row = document.createElement('article');
     row.className = 'bsai-history-item';
-    if (state.historyKey && item.key === state.historyKey) row.classList.add('is-current');
+    if (isCurrent) row.classList.add('is-current');
 
     const main = document.createElement('button');
     main.type = 'button';
     main.className = 'bsai-history-main';
-    main.dataset.historyAct = 'load';
-    main.dataset.key = item.key;
-    main.title = '载入这条总结';
+    main.dataset.historyAct = 'open';
+    main.dataset.historyId = item.id;
+    main.dataset.historyKey = item.key;
+    main.title = isCurrent ? '载入这条总结' : `打开视频：${item.title || item.bvid}`;
 
+    const head = document.createElement('div');
+    head.className = 'bsai-history-row-head';
     const title = document.createElement('div');
     title.className = 'bsai-history-title';
     title.textContent = item.title || item.bvid || item.key;
+    head.appendChild(title);
+    if (!isCurrent) {
+      const tag = document.createElement('span');
+      tag.className = 'bsai-history-tag';
+      tag.textContent = '跳转';
+      tag.title = '这是其他视频的历史，点击会打开该视频';
+      head.appendChild(tag);
+    }
 
     const meta = document.createElement('div');
     meta.className = 'bsai-history-meta';
@@ -1843,7 +1895,7 @@
     preview.className = 'bsai-history-preview';
     preview.textContent = item.summaryPreview || '';
 
-    main.append(title, meta, preview);
+    main.append(head, meta, preview);
 
     const actions = document.createElement('div');
     actions.className = 'bsai-history-actions';
@@ -1861,43 +1913,103 @@
     const list = state.refs.historyList;
     if (!list) return;
     const totals = state.historyTotals;
+    const items = filteredHistoryItems();
     if (state.refs.historyUsage) {
-      state.refs.historyUsage.textContent = totals
+      const usage = totals
         ? `${totals.count}/${totals.maxEntries} 条 · ${History.formatBytes(
             totals.bytes,
           )} / ${History.formatBytes(totals.maxBytes)}`
         : '本机历史';
+      state.refs.historyUsage.textContent =
+        state.historyFilter === 'current' && totals
+          ? `${usage} · 当前视频 ${items.length} 条`
+          : usage;
     }
     if (state.refs.clearHistory) state.refs.clearHistory.disabled = !state.historyItems.length;
+    syncHistoryFilters();
     updateHistoryCount();
     list.replaceChildren();
-    if (!state.historyItems.length) {
+    if (!items.length) {
       list.hidden = true;
-      setEmpty(state.refs.historyEmpty, {
-        icon: 'clock',
-        title: '还没有历史总结',
-        desc: `生成总结或逐字稿后会自动保存在本机（最多 ${History.MAX_ENTRIES} 条 / ${History.formatBytes(
-          History.MAX_TOTAL_BYTES,
-        )}）。刷新页面、关闭标签页后仍可在这里回看和导出。`,
-      });
+      if (!state.historyItems.length) {
+        setEmpty(state.refs.historyEmpty, {
+          icon: 'clock',
+          title: '还没有历史总结',
+          desc: `每次生成总结或逐字稿都会单独保存一条（最多 ${History.MAX_ENTRIES} 条 / ${History.formatBytes(
+            History.MAX_TOTAL_BYTES,
+          )}）。刷新页面、关闭标签页后仍可在这里回看和导出。`,
+        });
+      } else if (state.historyFilter === 'current' && !state.historyKey) {
+        setEmpty(state.refs.historyEmpty, {
+          icon: 'clock',
+          title: '正在读取当前视频…',
+          desc: '识别到视频信息后，这里会显示这个视频的历史记录。',
+        });
+      } else {
+        setEmpty(state.refs.historyEmpty, {
+          icon: 'clock',
+          title: '这个视频还没有历史记录',
+          desc: '切换到「所有视频」可以查看其他视频的历史；它们会显示「跳转」标记。',
+        });
+      }
       return;
     }
     hideEmpty(state.refs.historyEmpty);
     list.hidden = false;
     const fragment = document.createDocumentFragment();
-    for (const item of state.historyItems) fragment.appendChild(historyRow(item));
+    for (const item of items) fragment.appendChild(historyRow(item));
     list.appendChild(fragment);
   }
 
-  async function onHistoryAction(action, key) {
-    if (!key) return;
-    if (action === 'load') {
-      await loadHistoryEntry(key);
+  /** Where a history record points: the current page, or another video. */
+  function historyVideoUrl(entry) {
+    const bvid = String(entry.bvid || '').trim();
+    const pageNo = Math.max(1, Math.floor(Number(entry.pageNo) || 1));
+    if (bvid) {
+      return `https://www.bilibili.com/video/${encodeURIComponent(bvid)}${
+        pageNo > 1 ? `?p=${pageNo}` : ''
+      }`;
+    }
+    const stored = String(entry.url || '').trim();
+    return /^https?:\/\//i.test(stored) ? stored : '';
+  }
+
+  async function openHistoryVideo(id) {
+    try {
+      const entry = await History.readEntry(id);
+      if (!entry) {
+        showToast('这条历史已不存在', 'error');
+        await refreshHistory();
+        return;
+      }
+      const url = historyVideoUrl(entry);
+      if (!url) {
+        showToast('这条记录没有可跳转的视频地址', 'error');
+        return;
+      }
+      showToast(`正在打开《${entry.title || entry.bvid}》…`);
+      window.location.assign(url);
+    } catch (error) {
+      showToast(error.message || '打开视频失败', 'error');
+    }
+  }
+
+  async function onHistoryAction(action, target) {
+    const id = target && target.id;
+    const key = target && target.key;
+    if (!id && !key) return;
+    if (action === 'open') {
+      // Clicking another video's record must not paste its summary here.
+      if (key && state.historyKey && key !== state.historyKey) {
+        await openHistoryVideo(id);
+        return;
+      }
+      await loadHistoryEntry(id);
       return;
     }
     if (action === 'export-md' || action === 'export-txt') {
       try {
-        const entry = await History.readEntry(key);
+        const entry = await History.readEntry(id);
         if (!entry) {
           showToast('这条历史已不存在', 'error');
           refreshHistory();
@@ -1912,11 +2024,11 @@
     if (action === 'delete') {
       if (!window.confirm('删除这条历史总结？删除后只能重新生成。')) return;
       try {
-        const response = await sendRuntimeMessage({ type: 'HISTORY_DELETE', key }, 12000);
+        const response = await sendRuntimeMessage({ type: 'HISTORY_DELETE', id }, 12000);
         if (!response || !response.ok) throw new Error((response && response.error) || '删除失败');
         showToast('已删除这条历史');
         await refreshHistory();
-        if (state.historyKey === key && state.summaryFromHistory && state.refs.aiStatus) {
+        if (key && state.historyKey === key && state.summaryFromHistory && state.refs.aiStatus) {
           setStatus(state.refs.aiStatus, '这条总结的历史记录已删除，当前内容仍保留在页面上。', 'warn');
         }
       } catch (error) {
@@ -1927,7 +2039,12 @@
 
   async function clearAllHistory() {
     if (!state.historyItems.length) return;
-    if (!window.confirm(`清空全部 ${state.historyItems.length} 条历史总结？此操作无法撤销。`)) return;
+    if (
+      !window.confirm(
+        `清空全部 ${state.historyItems.length} 条历史记录（含同一视频的多次生成）？此操作无法撤销。`,
+      )
+    )
+      return;
     try {
       const response = await sendRuntimeMessage({ type: 'HISTORY_CLEAR' }, 15000);
       if (!response || !response.ok) throw new Error((response && response.error) || '清空失败');
@@ -2049,7 +2166,7 @@
       state.refs.aiStatus,
       `已恢复 ${U.formatLocalDateTime(
         state.summaryGeneratedAt,
-      )} 保存的总结，可直接导出；重新生成会覆盖这条历史。`,
+      )} 保存的总结，可直接导出；重新生成会另存为一条新历史。`,
       'success',
     );
     updateStylePicker();
@@ -2097,18 +2214,23 @@
     showToast(`已导出 ${filename}`);
   }
 
-  async function loadHistoryEntry(key) {
+  async function loadHistoryEntry(id) {
     if (state.summaryLoading) abortSummary(true);
     try {
-      const entry = await History.readEntry(key);
+      const entry = await History.readEntry(id);
       if (!entry) {
         showToast('这条历史已不存在', 'error');
         await refreshHistory();
         return;
       }
+      if (state.historyKey && entry.key !== state.historyKey) {
+        // Safety net: never show another video's summary in this panel.
+        await openHistoryVideo(entry.id);
+        return;
+      }
       applyHistoryEntry(entry, { replace: true });
       switchTab('ai');
-      showToast('已载入历史总结');
+      showToast('已载入这条历史总结');
     } catch (error) {
       showToast(error.message || '载入历史失败', 'error');
     }
@@ -2135,7 +2257,8 @@
     if (!key) return false;
     state.historyRestoring = true;
     try {
-      const entry = await History.readEntry(key);
+      // Several generations can exist for one video; restore the newest.
+      const entry = await History.latestEntry(key);
       if (!entry) return false;
       const applied = applyHistoryEntry(entry, { replace: Boolean(opts.replace) });
       if (applied) {
