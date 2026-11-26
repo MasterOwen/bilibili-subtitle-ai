@@ -1987,8 +1987,23 @@
         showToast('这条记录没有可跳转的视频地址', 'error');
         return;
       }
-      showToast(`正在打开《${entry.title || entry.bvid}》…`);
-      window.location.assign(url);
+      // Open in a new tab so the video being watched is not replaced.
+      let opened = false;
+      try {
+        const response = await sendRuntimeMessage({ type: 'OPEN_URL', url }, 12000);
+        opened = Boolean(response && response.ok);
+        if (!opened && response && response.error) throw new Error(response.error);
+      } catch (_) {
+        opened = false;
+      }
+      if (!opened) {
+        const win = window.open(url, '_blank', 'noopener');
+        if (!win) {
+          showToast('新标签页被浏览器拦截，请在地址栏打开：' + url, 'error', 6000);
+          return;
+        }
+      }
+      showToast(`已在新标签页打开《${entry.title || entry.bvid}》`);
     } catch (error) {
       showToast(error.message || '打开视频失败', 'error');
     }

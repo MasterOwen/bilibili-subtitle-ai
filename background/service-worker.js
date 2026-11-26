@@ -676,6 +676,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((error) => sendResponse(errorResponse(error)));
     return true;
   }
+  if (message.type === 'OPEN_URL') {
+    // Only Bilibili pages: the content script decides where to go, but a
+    // hijacked page must not be able to open arbitrary tabs with this message.
+    const url = typeof message.url === 'string' ? message.url.trim() : '';
+    if (!/^https:\/\/www\.bilibili\.com\//i.test(url)) {
+      sendResponse(errorResponse(new Error('仅支持打开 B站 链接')));
+      return false;
+    }
+    try {
+      chrome.tabs.create({ url, active: true }, (tab) => {
+        const error = chrome.runtime.lastError;
+        if (error) sendResponse(errorResponse(new Error(error.message)));
+        else sendResponse({ ok: true, tabId: tab && tab.id });
+      });
+    } catch (error) {
+      sendResponse(errorResponse(error));
+    }
+    return true;
+  }
   if (message.type === 'OPEN_OPTIONS') {
     try {
       chrome.runtime.openOptionsPage(() => {
