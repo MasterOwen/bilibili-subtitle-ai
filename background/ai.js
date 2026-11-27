@@ -873,8 +873,6 @@ ${notes}${customRequirement(config)}`,
   const MAX_CHUNK_TIMEOUT_MS = 300000;
   /** A streaming answer that goes silent this long is treated as stalled. */
   const STREAM_IDLE_TIMEOUT_MS = 180000;
-  /** A verbatim chunk emits about one token per source character. */
-  const TRANSCRIPT_CHUNK_CHARS = 4000;
 
   /**
    * Time allowed before the first byte of a chunk comes back (long reasoning
@@ -964,9 +962,14 @@ ${notes}${customRequirement(config)}`,
         budgetsForChars(chunkChars, 3000),
       );
     } catch (error) {
-      // A slow model can miss the deadline on a long chunk; halving it is a
-      // faster cure than retrying the same oversized request.
-      const splittable = error.code === 'OUTPUT_TRUNCATED' || error.code === 'TIMEOUT';
+      // A slow model can miss the deadline on a long chunk and a provider can
+      // reject an oversized body outright; halving the chunk is a faster cure
+      // than retrying the same request, and it is what makes large configured
+      // chunk sizes (the settings go up to 30000) safe to honor.
+      const splittable =
+        error.code === 'OUTPUT_TRUNCATED' ||
+        error.code === 'TIMEOUT' ||
+        error.status === 413;
       if (splittable && depth < 3) {
         const halves = splitChunkText(chunk);
         if (halves) {
@@ -1025,12 +1028,11 @@ ${notes}${customRequirement(config)}`,
     }
 
     const configuredChunk = Number(config.chunkChars) || 7000;
-    // Verbatim output is about as long as its input, so use smaller chunks than
-    // a summary would need; that keeps every request inside its deadline.
-    const chunkLimit = transcriptStyle
-      ? Math.min(configuredChunk, TRANSCRIPT_CHUNK_CHARS)
-      : configuredChunk;
-    const chunks = U.chunkSegments(segments, chunkLimit);
+    // The settings slider is the single source of truth for both styles: a value
+    // the UI accepts must reach the API unchanged (U.chunkSegments already bounds
+    // it to 1000-30000). A verbatim chunk that the provider rejects, truncates or
+    // times out is still safe because summarizeChunk halves it and retries.
+    const chunks = U.chunkSegments(segments, configuredChunk);
     if (!chunks.length) {
       throw new Error(transcriptStyle ? '字幕内容为空，无法生成逐字稿' : '字幕内容为空，无法总结');
     }

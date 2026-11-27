@@ -815,31 +815,73 @@ test('summarizeVideo splits a chunk that times out instead of failing the run', 
   assert.ok(result.stats.chunks >= 2);
 });
 
-test('summarizeVideo caps transcript chunks so one request cannot get huge', async () => {
+test('summarizeVideo honors the configured chunk size for transcripts', async () => {
   const segments = [];
-  for (let i = 0; i < 120; i += 1) {
+  for (let i = 0; i < 400; i += 1) {
     segments.push({
-      from: i * 2,
-      to: i * 2 + 1,
+      from: i,
+      to: i + 1,
       content: '这条字幕用于验证逐字稿的分段上限，需要足够长才能撑出多个分段。',
     });
   }
-  let maxBody = 0;
+
+  async function run(chunkChars) {
+    let maxBody = 0;
+    globalThis.fetch = async (url, init) => {
+      const user = JSON.parse(init.body).messages[1].content;
+      const body = user.slice(user.lastIndexOf('字幕：') + 3);
+      maxBody = Math.max(maxBody, body.length);
+      return jsonResponse({ choices: [{ message: { content: `[OK ${body.length}]` } }] });
+    };
+    const result = await AI.summarizeVideo({
+      video: { title: '逐字稿分段长度', duration: 400 },
+      segments,
+      config: config({ style: 'transcript', chunkChars }),
+    });
+    return { maxBody, chunks: result.stats.chunks };
+  }
+
+  const small = await run(3000);
+  const large = await run(12000);
+
+  assert.ok(small.maxBody <= 3100, `3000 字设置产生了 ${small.maxBody} 字的请求`);
+  assert.ok(large.maxBody <= 12100, `12000 字设置产生了 ${large.maxBody} 字的请求`);
+  // The old build silently capped transcripts at 4000 characters.
+  assert.ok(large.maxBody > 4200, `逐字稿没有跟随设置：最大分段只有 ${large.maxBody} 字`);
+  assert.ok(large.chunks < small.chunks, `更大的分段应减少请求数：${large.chunks} vs ${small.chunks}`);
+});
+
+test('summarizeVideo splits a transcript chunk the provider rejects as too large', async () => {
+  const segments = [];
+  for (let i = 0; i < 200; i += 1) {
+    segments.push({
+      from: i,
+      to: i + 1,
+      content: '这一段字幕用来模拟服务端 413：先拒绝过大的请求，拆半之后就能成功。',
+    });
+  }
+  let rejected = 0;
   globalThis.fetch = async (url, init) => {
     const user = JSON.parse(init.body).messages[1].content;
     const body = user.slice(user.lastIndexOf('字幕：') + 3);
-    maxBody = Math.max(maxBody, body.length);
+    if (body.length > 2500) {
+      rejected += 1;
+      return jsonResponse({ error: { message: 'request entity too large' } }, 413);
+    }
     return jsonResponse({ choices: [{ message: { content: `[OK ${body.length}]` } }] });
   };
 
   const result = await AI.summarizeVideo({
-    video: { title: '逐字稿上限', duration: 240 },
+    video: { title: '413 拆半重试', duration: 200 },
     segments,
-    config: config({ style: 'transcript', chunkChars: 30000 }),
+    config: config({ style: 'transcript', chunkChars: 3000 }),
   });
 
-  assert.ok(result.stats.chunks >= 2, `expected split chunks, got ${result.stats.chunks}`);
-  assert.ok(maxBody <= 4200, `transcript chunk too large: ${maxBody}`);
+  assert.ok(rejected >= 1, 'the oversized chunk should be rejected at least once');
+  assert.ok(
+    (result.summary.match(/\[OK \d+\]/g) || []).length >= 2,
+    'halves of the rejected chunk should succeed after the split',
+  );
 });
 
 test('OpenCode Go requests share one stable session header', async () => {
