@@ -200,3 +200,87 @@ test('sanitizes filenames for Windows downloads', () => {
   assert.equal(U.sanitizeFilename('CON'), '_CON');
   assert.ok(U.sanitizeFilename('x'.repeat(200)).length <= 90);
 });
+
+// --- x/v2/subtitle/web/view fallback ---------------------------------------
+
+function encodeVarint(value) {
+  const bytes = [];
+  let rest = value;
+  while (rest > 0x7f) {
+    bytes.push((rest & 0x7f) | 0x80);
+    rest = Math.floor(rest / 128);
+  }
+  bytes.push(rest & 0x7f);
+  return Buffer.from(bytes);
+}
+
+function protoVarint(field, value) {
+  return Buffer.concat([encodeVarint((field << 3) | 0), encodeVarint(value)]);
+}
+
+function protoBytes(field, payload) {
+  return Buffer.concat([encodeVarint((field << 3) | 2), encodeVarint(payload.length), payload]);
+}
+
+function protoText(field, text) {
+  return protoBytes(field, Buffer.from(text, 'utf8'));
+}
+
+/** Encode a path the way the web player's obfuscation expects to decode it. */
+function obfuscateSubtitlePath(realPath) {
+  const prefix = 'nP](wOFRvU.+<fjS{jn-!$D|Dz&",zT`';
+  const key = '=CFxYRn{.y|uVyO$uh&sikph?N.ilF/`bilibili';
+  const source = prefix + realPath;
+  let encoded = '';
+  for (let i = 0; i < source.length; i += 1) {
+    encoded += String.fromCharCode(source.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+  }
+  return `//subtitle.bilibili.com/${encodeURIComponent(encoded)}?auth_key=test-key`;
+}
+
+function buildSubtitleProto(tracks) {
+  const entries = tracks.map((track) =>
+    Buffer.concat([
+      protoVarint(1, track.id),
+      protoText(2, track.idStr),
+      protoText(3, track.lan),
+      protoText(4, track.lanDoc),
+      protoText(5, track.url),
+    ]),
+  );
+  return protoBytes(1, Buffer.concat(entries.map((entry) => protoBytes(3, entry))));
+}
+
+test('decodes the obfuscated subtitle URL used by the web player', () => {
+  const realPath = '/bfs/ai_subtitle/prod/1155752714629273410749304115685284b72987061c6dedd8cbcc771f';
+  const decoded = U.decodeSubtitleWebUrl(obfuscateSubtitlePath(realPath));
+  assert.equal(decoded, `https://aisubtitle.hdslb.com${realPath}?auth_key=test-key`);
+  // Not the web player's obfuscated form: leave it alone instead of guessing.
+  assert.equal(U.decodeSubtitleWebUrl('https://example.com/a.json'), '');
+  assert.equal(U.decodeSubtitleWebUrl(''), '');
+});
+
+test('parses the protobuf subtitle track list', () => {
+  const proto = buildSubtitleProto([
+    { id: 1890695843028371200, idStr: '1890695843028371200', lan: 'ai-zh', lanDoc: '中文', url: obfuscateSubtitlePath('/bfs/ai_subtitle/prod/zh.json') },
+    { id: 1891365238083955456, idStr: '1891365238083955456', lan: 'ai-en', lanDoc: 'English', url: obfuscateSubtitlePath('/bfs/ai_subtitle/prod/en.json') },
+  ]);
+  const tracks = U.parseSubtitleWebView(proto);
+  assert.equal(tracks.length, 2);
+  assert.equal(tracks[0].lan, 'ai-zh');
+  assert.equal(tracks[0].lan_doc, '中文');
+  assert.equal(tracks[0].subtitle_url, 'https://aisubtitle.hdslb.com/bfs/ai_subtitle/prod/zh.json?auth_key=test-key');
+  assert.equal(tracks[0].ai_type, 1);
+  assert.equal(tracks[1].lan, 'ai-en');
+
+  // The parsed shape feeds straight into the normal track pipeline.
+  const normalized = U.normalizeTrack(tracks[0]);
+  assert.equal(normalized.available, true);
+  assert.equal(normalized.isAi, true);
+  assert.equal(normalized.lanDoc, '中文');
+
+  // Garbage must not throw or invent tracks.
+  assert.deepEqual(U.parseSubtitleWebView(Buffer.from([0xff, 0xff, 0xff])), []);
+  assert.deepEqual(U.parseSubtitleWebView(new ArrayBuffer(0)), []);
+  assert.deepEqual(U.parseSubtitleWebView(null), []);
+});

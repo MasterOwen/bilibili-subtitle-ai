@@ -328,6 +328,47 @@ async function getPlayerTracks(video) {
   return { playerData, warning, loginRequired };
 }
 
+const SUBTITLE_WEB_VIEW_PATH = '/x/v2/subtitle/web/view';
+
+/**
+ * The web player asks this protobuf endpoint for its subtitle track list, and it
+ * still answers when player/v2 returns an empty list (charge-only previews, for
+ * example). Only used as a fallback so ordinary page loads keep their existing
+ * request count.
+ */
+async function fetchWebViewTracks(video) {
+  const aid = Number(video && video.aid);
+  const cid = Number(video && video.cid);
+  if (!aid || !cid) return [];
+  const params = new URLSearchParams({
+    oid: String(cid),
+    pid: String(aid),
+    type: '1',
+    context_ext: JSON.stringify({
+      video_type: video.isBangumi ? 2 : 1,
+      season_type: null,
+    }),
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(`${BILI_API_ORIGIN}${SUBTITLE_WEB_VIEW_PATH}?${params.toString()}`, {
+      method: 'GET',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: { Accept: 'application/octet-stream' },
+      signal: controller.signal,
+    });
+    if (!response.ok) return [];
+    if (/json/i.test(String(response.headers.get('content-type') || ''))) return [];
+    return U.parseSubtitleWebView(await response.arrayBuffer());
+  } catch (_) {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function resolveTracks(video, pageState, viewData) {
   const { playerData, warning, loginRequired } = await getPlayerTracks(video);
   const playerTracks = U.normalizePlayerTracks(playerData);
@@ -343,10 +384,22 @@ async function resolveTracks(video, pageState, viewData) {
     },
   });
   const merged = U.mergeTracks(playerTracks, viewTracks, stateTracks);
-  const tracks = merged.filter((track) => track.available);
-  const lockedCount = merged.filter((track) => !track.available).length;
+  let tracks = merged.filter((track) => track.available);
+  let lockedCount = merged.filter((track) => !track.available).length;
   const warnings = [];
   if (warning) warnings.push(warning);
+
+  // player/v2 can answer with no subtitle tracks for a video that still shows
+  // subtitles in the web player. The player itself falls back to this endpoint
+  // in that case, so do the same before telling the user there is nothing.
+  if (!tracks.length) {
+    const webTracks = await fetchWebViewTracks(video);
+    if (webTracks.length) {
+      const fromWebView = U.mergeTracks(merged, webTracks);
+      tracks = fromWebView.filter((track) => track.available);
+      lockedCount = fromWebView.filter((track) => !track.available).length;
+    }
+  }
 
   let reason = '';
   const needLogin = playerTracks.needLogin || loginRequired;

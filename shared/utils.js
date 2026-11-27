@@ -333,6 +333,169 @@
     return available.slice().sort((a, b) => trackScore(a, locale) - trackScore(b, locale))[0];
   }
 
+  // ---------------------------------------------------------------------------
+  // x/v2/subtitle/web/view (protobuf)
+  //
+  // The web player does not only read player/v2: it also asks this endpoint for
+  // the subtitle track list. player/v2 answers with an empty list for videos that
+  // still have subtitles in the player (charge-only previews, for example), so
+  // the extension uses this endpoint as a fallback source. Its response is
+  // protobuf and the subtitle URLs inside are obfuscated; the player undoes both
+  // client-side, so the same decoding is reproduced here.
+  // ---------------------------------------------------------------------------
+
+  const SUBTITLE_URL_MARKER = /\/\/subtitle\.bilibili\.com\/([^?]+)/;
+  const SUBTITLE_OBFUSCATION = [
+    ['nP](wOFRvU.+<fjS{jn-!$D|Dz&",zT`', "=CFxYRn{.y|uVyO$uh&sikph?N.ilF/`"],
+    ['Bn"q~|albg@]Go~ACgyDvKnd+)_D}^&J?', "Cu~L!xs~f^&r@'vh=q]q{eeng*sEg&kp#J"],
+  ];
+
+  /** Turn the obfuscated `//subtitle.bilibili.com/...` URL into a CDN URL. */
+  function decodeSubtitleWebUrl(raw) {
+    const match = String(raw || '').match(SUBTITLE_URL_MARKER);
+    if (!match) return '';
+    let path = match[1];
+    const query = String(raw).split('?')[1] || '';
+    try {
+      path = decodeURIComponent(path);
+    } catch (_) {
+      /* percent escapes may already be decoded */
+    }
+    for (const pair of SUBTITLE_OBFUSCATION) {
+      const prefix = pair[0];
+      const fullKey = `${pair[1]}bilibili`;
+      let decoded = '';
+      for (let i = 0; i < path.length; i += 1) {
+        decoded += String.fromCharCode(path.charCodeAt(i) ^ fullKey.charCodeAt(i % fullKey.length));
+      }
+      if (decoded.indexOf(prefix) === 0) {
+        return `https://aisubtitle.hdslb.com${decoded.slice(prefix.length)}?${query}`;
+      }
+    }
+    return '';
+  }
+
+  function decodeUtf8(bytes) {
+    if (typeof TextDecoder === 'function') {
+      try {
+        return new TextDecoder('utf-8').decode(bytes);
+      } catch (_) {
+        /* fall through to the byte-by-byte decoder */
+      }
+    }
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 1) out += String.fromCharCode(bytes[i]);
+    return out;
+  }
+
+  function readVarint(bytes, start) {
+    let value = 0;
+    let shift = 0;
+    let offset = start;
+    for (;;) {
+      if (offset >= bytes.length) throw new Error('protobuf: truncated varint');
+      const byte = bytes[offset];
+      offset += 1;
+      value += (byte & 0x7f) * 2 ** shift;
+      if (!(byte & 0x80)) return [value, offset];
+      shift += 7;
+      if (shift > 56) throw new Error('protobuf: varint too long');
+    }
+  }
+
+  function readProtoFields(bytes) {
+    const fields = [];
+    let offset = 0;
+    while (offset < bytes.length) {
+      let tag;
+      [tag, offset] = readVarint(bytes, offset);
+      const field = tag >> 3;
+      const wire = tag & 7;
+      if (!field) throw new Error('protobuf: invalid field number');
+      if (wire === 0) {
+        let value;
+        [value, offset] = readVarint(bytes, offset);
+        fields.push({ field, wire, value });
+      } else if (wire === 1) {
+        fields.push({ field, wire, value: bytes.subarray(offset, offset + 8) });
+        offset += 8;
+      } else if (wire === 5) {
+        fields.push({ field, wire, value: bytes.subarray(offset, offset + 4) });
+        offset += 4;
+      } else if (wire === 2) {
+        let length;
+        [length, offset] = readVarint(bytes, offset);
+        if (offset + length > bytes.length) throw new Error('protobuf: truncated field');
+        fields.push({ field, wire, value: bytes.subarray(offset, offset + length) });
+        offset += length;
+      } else {
+        throw new Error('protobuf: unsupported wire type');
+      }
+    }
+    return fields;
+  }
+
+  /**
+   * Parse the protobuf payload of x/v2/subtitle/web/view into the same track
+   * shape the JSON endpoints produce. Unknown or malformed payloads yield [].
+   */
+  function parseSubtitleWebView(buffer) {
+    if (!buffer) return [];
+    let bytes;
+    if (typeof Uint8Array === 'function' && buffer instanceof Uint8Array) {
+      bytes = buffer;
+    } else if (typeof ArrayBuffer === 'function' && buffer instanceof ArrayBuffer) {
+      bytes = new Uint8Array(buffer);
+    } else if (typeof buffer.byteLength === 'number') {
+      bytes = new Uint8Array(buffer);
+    } else {
+      return [];
+    }
+    let top;
+    try {
+      top = readProtoFields(bytes);
+    } catch (_) {
+      return [];
+    }
+    const payload = top.find((item) => item.field === 1 && item.wire === 2);
+    if (!payload) return [];
+    let inner;
+    try {
+      inner = readProtoFields(payload.value);
+    } catch (_) {
+      return [];
+    }
+    const tracks = [];
+    for (const item of inner) {
+      if (item.field !== 3 || item.wire !== 2) continue;
+      let entry;
+      try {
+        entry = readProtoFields(item.value);
+      } catch (_) {
+        continue;
+      }
+      const text = (field) => {
+        const found = entry.find((candidate) => candidate.field === field && candidate.wire === 2);
+        return found ? decodeUtf8(found.value) : '';
+      };
+      const idField = entry.find((candidate) => candidate.field === 1 && candidate.wire === 0);
+      const lan = text(3);
+      const lanDoc = text(4);
+      if (!lan && !lanDoc) continue;
+      tracks.push({
+        id: idField ? idField.value : 0,
+        id_str: text(2),
+        lan,
+        lan_doc: lanDoc || lan,
+        subtitle_url: decodeSubtitleWebUrl(text(5)),
+        is_lock: false,
+        ai_type: /(^|-)ai($|-)/i.test(lan) ? 1 : 0,
+        author: { name: '' },
+      });
+    }
+    return tracks;
+  }
+
   function safeSrtText(value) {
     return cleanSubtitleText(value).replace(/\n{3,}/g, '\n\n');
   }
@@ -778,6 +941,8 @@
     normalizeTrack,
     normalizePlayerTracks,
     mergeTracks,
+    decodeSubtitleWebUrl,
+    parseSubtitleWebView,
     pickBestTrack,
     chunkSegments,
     escapeHtml,
